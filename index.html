@@ -214,11 +214,7 @@ function tagSummary(ref){
 /* ============ views ============ */
 function rekeningView(){
   const toolbar='<div class="toolbar"><p class="lead" style="margin:0">Rekening koran</p><button class="btn primary" onclick="openImport()">Import PDF BCA</button></div>';
-  const saSet=isAdmin?('<div class="controls" style="margin:-4px 0 16px"><span style="font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)">Saldo awal pertama</span>'+
-    '<input id="sa_in" type="number" value="'+(D.setting.saldo_awal===''||D.setting.saldo_awal==null?'':D.setting.saldo_awal)+'" placeholder="mis. 1500000" style="font-family:var(--mono);font-size:13px;padding:8px 12px;border:1px solid var(--line);border-radius:9px;width:160px;background:var(--surface)">'+
-    '<button class="btn" onclick="saveSaldoAwal()">Simpan</button>'+
-    '<span style="font-size:12px;color:var(--muted)">titik mulai saldo sebelum transaksi pertama</span></div>'):'';
-  if(!D.rekening.length) return toolbar+saSet+emptyState("Belum ada baris rekening. Klik <b>Import PDF BCA</b> untuk tarik mutasi dari e-Statement.");
+  if(!D.rekening.length) return toolbar+emptyState("Belum ada baris rekening. Klik <b>Import PDF BCA</b> untuk tarik mutasi dari e-Statement. Saldo awal terisi otomatis dari statement pertama.");
   const rows=D.rekening.map(r=>{
     const s=tagSummary(r.id);
     const st=!s?'<span class="st"><span class="d" style="background:var(--copper)"></span><span style="color:var(--copper-d)">belum di-tag</span></span>'
@@ -229,15 +225,8 @@ function rekeningView(){
       '<td class="num '+(r.arah==='CR'?'cr':'db')+'">'+(r.arah==='CR'?'+':'−')+rp(r.nominal)+'</td>'+
       '<td class="num" style="color:var(--muted)">'+rp(r.saldo)+'</td><td>'+st+'</td></tr>';
   }).join("");
-  return toolbar+saSet+'<p class="sub">Baris mentah dari BCA, apa adanya. CR = pemasukan, DB = pengeluaran. Klik baris untuk validasi, pecah jadi alokasi, dan lampirkan bukti.</p>'+
+  return toolbar+'<p class="sub">Baris mentah dari BCA, apa adanya. CR = pemasukan, DB = pengeluaran. Klik baris untuk validasi, pecah jadi alokasi, dan lampirkan bukti.</p>'+
     '<div class="card"><table><thead><tr><th>Tgl</th><th>Keterangan</th><th class="num">Mutasi</th><th class="num">Saldo</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
-}
-
-function saveSaldoAwal(){
-  var v=document.getElementById('sa_in').value;
-  var num=v===''?'':Number(v);
-  if(DEMO){ D.setting.saldo_awal=num; render(); return; }
-  api('saveSetting',{pwd:PWD,key:'saldo_awal',value:num}).then(function(){reload();}).catch(function(e){alert(e.message);});
 }
 
 function taggingView(){
@@ -363,7 +352,7 @@ function dashboardView(){
     '<div class="row" style="color:var(--in)"><span>+ Pemasukan</span><span class="n">'+rp(masuk)+'</span></div>'+
     '<div class="row" style="color:var(--out)"><span>− Pengeluaran</span><span class="n">'+rp(keluar)+'</span></div>'+
     '<div class="row" style="border-top:1px solid var(--line);font-weight:600"><span>Saldo akhir ('+MONTHS[lastM]+')</span><span class="n" style="color:var(--copper-d)">'+rpN(saldoAkhir)+'</span></div>'+
-    (saldoAwalPertama===null?'<p class="hint" style="margin-top:8px;color:var(--out)">Saldo awal pertama belum diset — isi di tab Rekening (admin), atau import statement Januari.</p>':'')+'</div>';
+    (saldoAwalPertama===null?'<p class="hint" style="margin-top:8px;color:var(--out)">Saldo awal pertama belum keisi — otomatis terisi saat import statement pertama (Januari).</p>':'')+'</div>';
   return head+controls+kpis+saldoCard+
     (belum>0?'<div class="panel notif" style="margin-bottom:14px"><div class="row" style="border:0"><span class="t">⚠ '+rp(belum)+' udah masuk total, tapi belum dialokasikan — admin tag dulu biar rinciannya muncul.</span><span></span></div></div>':'')+
     '<div class="two"><div class="panel"><h3>Pemasukan</h3>'+breakdown("CR",masuk,["donatur"])+'</div>'+
@@ -549,18 +538,18 @@ function parseBCA(items){
   lines.forEach(function(l){l.sort(function(a,b){return a.x-b.x;});});
   const T=l=>l.map(t=>t.s);
   let footer=lines.length;
-  for(let i=0;i<lines.length;i++){const tx=T(lines[i]);if(tx.indexOf(':')>=0&&(tx.indexOf('SALDO')>=0||tx.indexOf('MUTASI')>=0)){footer=i;break;}}
+  for(let i=0;i<lines.length;i++){const l=lines[i];if(l.some(function(t){return t.s===':';})&&l.some(function(t){return /^(SALDO|MUTASI)\b/.test(t.s);})){footer=i;break;}}
   const body=lines.slice(0,footer), foot=lines.slice(footer);
   const amt=/^[\d,]+\.\d\d$/, num=s=>parseFloat(s.replace(/,/g,''));
-  function fv(a,b){for(const l of foot){const tx=T(l);if(tx.indexOf(a)>=0&&(!b||tx.indexOf(b)>=0)){const ns=l.filter(t=>amt.test(t.s)),is=l.filter(t=>/^\d+$/.test(t.s));return{amount:ns.length?num(ns[ns.length-1].s):null,count:is.length?parseInt(is[is.length-1].s,10):null};}}return{amount:null,count:null};}
-  const eCR=fv('MUTASI','CR'), eDB=fv('MUTASI','DB'), eSA=fv('SALDO','AKHIR'), eAW=fv('SALDO','AWAL');
+  function fv(label){for(const l of foot){if(l.some(function(t){return t.s.replace(/\s+/g,' ').toUpperCase()===label;})){const ns=l.filter(function(t){return amt.test(t.s);}),is=l.filter(function(t){return /^\d+$/.test(t.s);});return{amount:ns.length?num(ns[ns.length-1].s):null,count:is.length?parseInt(is[is.length-1].s,10):null};}}return{amount:null,count:null};}
+  const eCR=fv('MUTASI CR'), eDB=fv('MUTASI DB'), eSA=fv('SALDO AKHIR'), eAW=fv('SALDO AWAL');
   const dre=/^\d\d\/\d\d$/, anchors=[];
   body.forEach((l,i)=>{ if(l[0].x<70&&dre.test(l[0].s)) anchors.push(i); });
   let saldoAwal=eAW.amount||0; const rows=[];
   anchors.forEach((idx,a)=>{
     const end=a+1<anchors.length?anchors[a+1]:body.length;
     const blk=[].concat.apply([],body.slice(idx,end)); const tx=blk.map(t=>t.s); const tgl=body[idx][0].s;
-    if(tx.indexOf('SALDO')>=0&&tx.indexOf('AWAL')>=0){const s=blk.filter(t=>t.x>500&&amt.test(t.s));if(s.length)saldoAwal=num(s[s.length-1].s);return;}
+    if(tx.some(function(s){return /SALDO\s*AWAL/i.test(s);})){const s=blk.filter(function(t){return amt.test(t.s);});if(s.length)saldoAwal=num(s[s.length-1].s);return;}
     const mut=blk.filter(t=>t.x>355&&t.x<440&&amt.test(t.s)); if(!mut.length) return;
     const db=blk.some(t=>t.s==='DB'&&t.x>438);
     const type=blk.filter(t=>t.x>80&&t.x<170).map(t=>t.s).join(' ');
