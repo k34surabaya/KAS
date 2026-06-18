@@ -291,7 +291,8 @@ function monthFilter(cur,varName){
 }
 function passMonth(r,cur){return cur==='all'||monthOf(r)===+cur;}
 function rekeningView(){
-  const toolbar='<div class="toolbar"><p class="lead" style="margin:0">Rekening koran</p><span style="display:flex;gap:8px"><button class="btn" onclick="resetAll()">Reset data</button><button class="btn primary" onclick="openImport()">Import PDF BCA</button></span></div>';
+  const todoRek=D.rekening.filter(r=>!isTagged(r.id)).length;
+  const toolbar='<div class="toolbar"><p class="lead" style="margin:0">Rekening koran</p><span style="display:flex;gap:8px;flex-wrap:wrap">'+(isAdmin&&todoRek?'<button class="btn" onclick="autoTagAll()">⚡ Auto-tag ('+todoRek+')</button>':'')+'<button class="btn" onclick="resetAll()">Reset data</button><button class="btn primary" onclick="openImport()">Import PDF BCA</button></span></div>';
   if(!D.rekening.length) return toolbar+emptyState("Belum ada baris rekening. Klik <b>Import PDF BCA</b> untuk tarik mutasi dari e-Statement. Saldo awal terisi otomatis dari statement pertama.");
   const rows=D.rekening.filter(r=>passMonth(r,fRek)).map(r=>{
     const s=tagSummary(r.id);
@@ -496,7 +497,7 @@ function resetAll(){
   if(DEMO){ D=SEED(); fromM=toM=evalM=null; afterLoad(); return; }
   api('resetData',{pwd:PWD}).then(function(){ fromM=toM=evalM=null; reload(function(){alert('Data dikosongkan. Silakan Import PDF BCA lagi, lalu Auto-tag.');}); }).catch(function(e){alert(e.message);});
 }
-function autoTagAll(){
+function autoTagAll(skipConfirm){
   if(!isAdmin){ openLogin(); return; }
   var untag=D.rekening.filter(function(r){return !isTagged(r.id);});
   var nameToId={}; D.members.forEach(function(m){nameToId[m.nama.trim().toLowerCase()]=m.id;});
@@ -507,10 +508,10 @@ function autoTagAll(){
     var rows=d.rows.map(function(x){var c=CATS[x.kat];return {kat:x.kat,member:c.member?resolve(x.member):'',nama:c.nama?(x.nama||''):'',bulan:+x.bulan,qty:c.qty?(+x.qty||''):'',satuan:c.qty?(x.satuan||c.satuan):'',nominal:+x.nominal};});
     items.push({ref:r.id,rows:rows}); cnt+=rows.length;
   });
-  if(!items.length){ alert('Tidak ada baris yang bisa di-auto-tag.'); return; }
-  if(!confirm('Auto-tag '+items.length+' transaksi (~'+cnt+' alokasi)?\nYang multi-bulan / nominal besar ditandai ⚠ "cek" — bisa kamu betulin setelahnya.')) return;
-  if(DEMO){ newMembers.forEach(function(m){D.members.push(m);}); items.forEach(function(it){it.rows.forEach(function(x,k){D.alokasi.push(Object.assign({id:'al'+Date.now()+'_'+Math.floor(Math.random()*1e6),ref:it.ref,auto:'1'},x));});}); render(); return; }
-  api('saveAlokasiBatch',{pwd:PWD,items:items,newMembers:newMembers}).then(function(res){reload(function(){alert('Selesai — '+((res&&res.added)||cnt)+' alokasi dibuat. Cek baris bertanda ⚠.');});}).catch(function(e){alert(e.message);});
+  if(!items.length){ if(!skipConfirm) alert('Tidak ada baris yang bisa di-auto-tag (nama tak terbaca). Tag manual ya.'); return; }
+  if(!skipConfirm && !confirm('Auto-tag '+items.length+' transaksi (~'+cnt+' alokasi)?\nSemua ditandai "auto" — yang multi-bulan / nominal besar dapat ⚠ "cek". Tinggal kamu betulin lalu Simpan.')) return;
+  if(DEMO){ newMembers.forEach(function(m){D.members.push(m);}); items.forEach(function(it){it.rows.forEach(function(x,k){D.alokasi.push(Object.assign({id:'al'+Date.now()+'_'+Math.floor(Math.random()*1e6),ref:it.ref,auto:'1'},x));});}); render(); alert('Auto-tag selesai (demo) — '+cnt+' alokasi bertanda "auto".'); return; }
+  api('saveAlokasiBatch',{pwd:PWD,items:items,newMembers:newMembers}).then(function(res){reload(function(){alert('Auto-tag selesai — '+((res&&res.added)||cnt)+' alokasi bertanda "auto" dibuat. Cek baris ⚠/auto, buka & Simpan untuk verifikasi.');});}).catch(function(e){alert(e.message);});
 }
 function openTag(ref){
   if(!isAdmin){ openLogin(); return; }
@@ -734,9 +735,9 @@ function writeImport(){
   if(DEMO){
     const key=r=>[r.tgl,r.arah,r.nominal,r.ket].join('|'); const seen={}; D.rekening.forEach(r=>seen[key(r)]=true);
     let n=0; rows.forEach((r,i)=>{ if(seen[key(r)])return; D.rekening.push({id:'rk'+Date.now()+i,tgl:r.tgl,arah:r.arah,nominal:r.nominal,saldo:r.saldo,ket:r.ket,raw:r.raw,bukti:''}); n++; });
-    D.setting.saldo_awal=D.setting.saldo_awal||sa; closeModal(); render(); alert(n+' baris ditambahkan (demo).'); return;
+    D.setting.saldo_awal=D.setting.saldo_awal||sa; closeModal(); render(); autoTagAll(true); return;
   }
-  api('importRekening',{pwd:PWD,rows:rows,saldoAwal:sa}).then(function(n){reload(function(){closeModal();render();alert(n+' baris ditambahkan.');});}).catch(function(e){alert(e.message);});
+  api('importRekening',{pwd:PWD,rows:rows,saldoAwal:sa}).then(function(n){reload(function(){closeModal();render();autoTagAll(true);});}).catch(function(e){alert(e.message);});
 }
 
 /* ============ shell ============ */
