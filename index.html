@@ -105,6 +105,7 @@
   .chip{font-size:13px;padding:4px 10px;border-radius:7px;background:var(--surface-2);border:1px solid var(--line)}
   .chip .mo{font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--copper-d);margin-left:7px}
   .cek{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:#fff;background:var(--copper);padding:1px 6px;border-radius:5px;margin-right:5px}
+  .autob{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--muted);background:var(--surface-2);border:1px solid var(--line);padding:1px 6px;border-radius:5px;margin-right:5px}
   .totrow td{border-top:2px solid var(--line);background:var(--surface-2)}
   .row .mo{font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--copper-d);margin-left:6px}
   .ym{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line-2);font-size:13px}
@@ -278,7 +279,7 @@ function tagSummary(ref){
     else if(c&&c.nama){const ns=[...new Set(al.map(a=>a.nama).filter(Boolean))];if(ns.length)txt=c.label.replace(" (non-op)","")+" · "+ns.join(", ");}
     else if(c&&c.qty){const q=al.reduce((s,a)=>s+(+a.qty||0),0);txt=c.label+" · "+q+" "+c.satuan;}
   }
-  return {txt,op:al.some(a=>CATS[a.kat]&&CATS[a.kat].op)};
+  return {txt,op:al.some(a=>CATS[a.kat]&&CATS[a.kat].op),auto:al.some(a=>String(a.auto)==='1')};
 }
 
 /* ============ views ============ */
@@ -295,7 +296,7 @@ function rekeningView(){
   const rows=D.rekening.filter(r=>passMonth(r,fRek)).map(r=>{
     const s=tagSummary(r.id);
     const st=!s?'<span class="st"><span class="d" style="background:var(--copper)"></span><span style="color:var(--copper-d)">belum di-tag</span></span>'
-      :'<span class="st"><span class="d" style="background:'+(s.op?'var(--in)':'var(--faint)')+'"></span><span>'+s.txt+'</span></span>';
+      :'<span class="st">'+(s.auto?'<span class="autob">auto</span>':'')+'<span class="d" style="background:'+(s.op?'var(--in)':'var(--faint)')+'"></span><span>'+s.txt+'</span></span>';
     const bukti=r.bukti?'<a href="'+r.bukti+'" target="_blank">lihat bukti</a>':'';
     return '<tr class="clickable" onclick="openTag(\''+r.id+'\')"><td class="idx">'+fmtTgl(r)+'</td>'+
       '<td class="ket">'+r.ket+'<span class="raw">'+r.raw+' '+bukti+'</span></td>'+
@@ -310,8 +311,9 @@ function taggingView(){
   if(!D.rekening.length) return emptyState("Belum ada baris rekening untuk di-tag.");
   const order=[...D.rekening].filter(r=>passMonth(r,fTag)).sort((a,b)=>(isTagged(a.id)?1:0)-(isTagged(b.id)?1:0));
   const rows=order.map(r=>{
+    const auto=isTagged(r.id)&&allocOf(r.id).some(a=>String(a.auto)==='1')?'<span class="autob" title="hasil auto-tag — buka & simpan untuk verifikasi">auto</span> ':'';
     const cek=isTagged(r.id)&&needsCheck(r.id)?'<span class="cek" title="hasil auto-tag, mungkin perlu dibetulin">⚠ cek</span> ':'';
-    const detail=isTagged(r.id)?cek+allocOf(r.id).map(a=>{
+    const detail=isTagged(r.id)?auto+cek+allocOf(r.id).map(a=>{
       const who=a.member?memName(a.member).split(" ")[0]:(a.nama||(CATS[a.kat]?CATS[a.kat].label:a.kat));
       const q=a.qty?(" "+a.qty+a.satuan):""; const b=(CATS[a.kat]&&CATS[a.kat].member)?(" "+MONTHS[a.bulan]):"";
       return '<span class="pill">'+(CATS[a.kat]?CATS[a.kat].label.replace(" (non-op)",""):a.kat)+": "+who+b+q+'</span>';
@@ -507,7 +509,7 @@ function autoTagAll(){
   });
   if(!items.length){ alert('Tidak ada baris yang bisa di-auto-tag.'); return; }
   if(!confirm('Auto-tag '+items.length+' transaksi (~'+cnt+' alokasi)?\nYang multi-bulan / nominal besar ditandai ⚠ "cek" — bisa kamu betulin setelahnya.')) return;
-  if(DEMO){ newMembers.forEach(function(m){D.members.push(m);}); items.forEach(function(it){it.rows.forEach(function(x,k){D.alokasi.push(Object.assign({id:'al'+Date.now()+'_'+Math.floor(Math.random()*1e6),ref:it.ref},x));});}); render(); return; }
+  if(DEMO){ newMembers.forEach(function(m){D.members.push(m);}); items.forEach(function(it){it.rows.forEach(function(x,k){D.alokasi.push(Object.assign({id:'al'+Date.now()+'_'+Math.floor(Math.random()*1e6),ref:it.ref,auto:'1'},x));});}); render(); return; }
   api('saveAlokasiBatch',{pwd:PWD,items:items,newMembers:newMembers}).then(function(res){reload(function(){alert('Selesai — '+((res&&res.added)||cnt)+' alokasi dibuat. Cek baris bertanda ⚠.');});}).catch(function(e){alert(e.message);});
 }
 function openTag(ref){
