@@ -95,6 +95,7 @@
   .demo{font-family:var(--mono);font-size:11px;color:var(--copper-d);text-align:center;padding:6px;background:var(--copper-soft);border-bottom:1px solid var(--line)}
   .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px}
   .controls select{font-family:var(--mono);font-size:12px;padding:8px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink)}
+  .rangepick{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:var(--muted)}
   .opslist{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}
   .ops{display:flex;align-items:baseline;gap:8px;font-size:14px;padding:4px 0}
   .ops .big{font-family:var(--mono);font-size:18px;color:var(--copper-d)} .ops .lbl{color:var(--muted);font-size:13px}
@@ -103,6 +104,9 @@
   .chips{display:flex;flex-wrap:wrap;gap:6px}
   .chip{font-size:13px;padding:4px 10px;border-radius:7px;background:var(--surface-2);border:1px solid var(--line)}
   .chip .mo{font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--copper-d);margin-left:7px}
+  .cek{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:#fff;background:var(--copper);padding:1px 6px;border-radius:5px;margin-right:5px}
+  .totrow td{border-top:2px solid var(--line);background:var(--surface-2)}
+  .row .mo{font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--copper-d);margin-left:6px}
   .ym{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line-2);font-size:13px}
   .ym:last-child{border-bottom:0}
   .ym .mlbl{font-family:var(--mono);width:34px;color:var(--ink);flex:none}
@@ -137,11 +141,10 @@
 <script>
 /* ============ data layer (GitHub Pages → fetch → Apps Script API) ============ */
 /* URL /exec Apps Script. Kosongkan untuk mode pratinjau (data contoh). */
-var API_URL = 'https://script.google.com/macros/s/AKfycbzqq2b9kTJ-M1-SzjTPGhmrD_JVomlBEE2NK__SR44BhIFcuT68qwwFP3OV4BGPDs3JPg/exec';
+var API_URL = 'https://script.google.com/macros/s/AKfycbzmwrrRCc_Tv1BrK8li7CwHh13OkndZRYr-7tqZf_FOSQwEx9MoKShlrQZ3AP26o5GT/exec';
 
-var DEMO=false, PWD='', isAdmin=false, tab='dashboard', scope='bulan', selMonth=null, selPeriod=2;
-var PERIODS=[[0,1],[2,3],[4,5],[6,7],[8,9],[10,11]];
-function periodLabel(p){var M=["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];return M[PERIODS[p][0]]+"–"+M[PERIODS[p][1]];}
+var DEMO=false, PWD='', isAdmin=false, tab='dashboard', scope='bulan', fromM=null, toM=null;
+var fTag='all', fRek='all', evalM=null;
 
 function api(action, data){
   return fetch(API_URL, {
@@ -171,10 +174,10 @@ function reload(cb){
   api('getData').then(function(d){D=d;if(cb)cb();render();}).catch(function(e){alert(e.message);});
 }
 function afterLoad(){
-  if(selMonth===null){
+  if(fromM===null){
     var ms=D.rekening.map(monthOf).filter(function(m){return m>=0;});
-    selMonth = ms.length ? Math.max.apply(null,ms) : 0;
-    selPeriod = Math.floor(selMonth/2);
+    var latest = ms.length ? Math.max.apply(null,ms) : 0;
+    fromM=latest; toM=latest;
   }
   render();
 }
@@ -195,9 +198,76 @@ const rp=n=>"Rp"+Number(n||0).toLocaleString("id-ID",{maximumFractionDigits:2});
 const rek=id=>D.rekening.find(r=>r.id===id);
 const mem=id=>D.members.find(m=>m.id===id);
 const memName=id=>{const m=mem(id);return m?m.nama:"(?)";};
-const monthOf=r=>(r&&r.tgl&&r.tgl.length>=5)?parseInt(r.tgl.slice(3,5),10)-1:-1;
+/* tgl bisa berupa teks "DD/MM" ATAU string Date hasil auto-convert Google Sheets
+   (mis. "04/05" kebaca M/D jadi "Sun Apr 05 2026"). Untuk yang ke-mangle, hari & bulan
+   ke-tukar: bulan-tampil = tanggal asli, tanggal-tampil = bulan asli. Pulihkan keduanya.
+   Baca komponen dari teks langsung supaya tidak tergantung timezone. */
+function parseTgl(v){
+  v=String(v==null?'':v).trim();
+  var m=v.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if(m) return {day:+m[1], month:+m[2]};
+  var MM={Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12};
+  var t=v.match(/\b([A-Z][a-z]{2})\s+(\d{1,2})\s+\d{4}\b/);          /* "Apr 05 2026" */
+  if(t && MM[t[1]]) return {day:MM[t[1]], month:+t[2]};
+  var iso=v.match(/^(\d{4})-(\d{2})-(\d{2})/);                        /* "2026-04-05" */
+  if(iso) return {day:+iso[2], month:+iso[3]};
+  var d=new Date(v);
+  if(!isNaN(d.getTime())) return {day:d.getMonth()+1, month:d.getDate()};
+  return {day:0, month:0};
+}
+const monthOf=r=>{var p=parseTgl(r&&r.tgl);return p.month?p.month-1:-1;};
+const dayOf=r=>{var p=parseTgl(r&&r.tgl);return p.day||0;};
+const fmtTgl=r=>{var p=parseTgl(r&&r.tgl);return p.month?(String(p.day).padStart(2,'0')+'/'+String(p.month).padStart(2,'0')):String((r&&r.tgl)||'');};
 const allocOf=ref=>D.alokasi.filter(a=>a.ref===ref);
 const isTagged=ref=>allocOf(ref).length>0;
+
+/* ============ auto-tag dari keterangan ============ */
+const MONTHTOK={januari:0,jan:0,februari:1,pebruari:1,feb:1,peb:1,maret:2,mar:2,april:3,apr:3,mei:4,juni:5,jun:5,juli:6,jul:6,agustus:7,agu:7,agt:7,september:8,sept:8,sep:8,oktober:9,okt:9,november:10,nov:10,nop:10,desember:11,des:11};
+function titleCase(s){return String(s||'').toLowerCase().replace(/(^|\s)([a-z])/g,function(_,a,c){return a+c.toUpperCase();}).trim();}
+function extractName(ket){
+  var toks=String(ket||'').trim().split(/\s+/), name=[];
+  for(var i=toks.length-1;i>=0;i--){ if(/^[A-Z][A-Z.,'\-]*$/.test(toks[i])) name.unshift(toks[i]); else break; }
+  var s=name.join(' ').replace(/[.,\s]+$/,'').trim();
+  return (s.replace(/[^A-Z]/g,'').length>=2)?s:'';
+}
+function parseMonths(ket){
+  var lc=String(ket||'').toLowerCase();
+  var toks=lc.split(/[^a-z]+/).filter(Boolean), found=[];
+  toks.forEach(function(t){ if(t in MONTHTOK && found.indexOf(MONTHTOK[t])<0) found.push(MONTHTOK[t]); });
+  found.sort(function(a,b){return a-b;});
+  var rangeHint=/\bsampai\b|\bs\.?\/?d\b|\bhingga\b|-/.test(lc);
+  if(found.length===2 && rangeHint){ var r=[]; for(var m=found[0];m<=found[1];m++) r.push(m); return r; }
+  return found;
+}
+/* kembalikan {rows:[...editorFormat], cek:bool}. rows kosong = biarkan manual. */
+function detectTag(r){
+  var arah=r.arah, R=String(r.raw||'').toUpperCase().trim();
+  var tm=monthOf(r); if(tm<0) tm=(typeof toM==='number'?toM:0);
+  if(arah==='CR' && R==='BUNGA') return {rows:[{kat:'bunga',member:'',nama:'',bulan:tm,qty:'',satuan:'',nominal:r.nominal}],cek:false};
+  if(arah==='DB' && (R==='BIAYA ADM'||R==='PAJAK BUNGA')) return {rows:[{kat:'biaya_bank',member:'',nama:'',bulan:tm,qty:'',satuan:'',nominal:r.nominal}],cek:false};
+  if(arah==='DB') return {rows:[],cek:false};            // pengeluaran operasional: biarkan kosong
+  var name=extractName(r.ket); if(!name) return {rows:[],cek:false};
+  var months=parseMonths(r.ket); if(!months.length) months=[tm];
+  var isMember = r.nominal>=100000;                       // <100rb -> non-member
+  var kat=isMember?'membership':'non_member', per=months.length;
+  var each=Math.round((r.nominal/per)*100)/100;
+  var rows=months.map(function(m,idx){return {kat:kat,member:isMember?titleCase(name):'',nama:isMember?'':titleCase(name),
+    bulan:m,qty:'',satuan:'',nominal: idx<per-1?each:+(r.nominal-each*(per-1)).toFixed(2)};});
+  return {rows:rows, cek:(per>1 || r.nominal>=500000)};   // multi-bulan / nominal besar -> perlu cek
+}
+/* heuristik tampilan "perlu cek" di tab Tagging (tanpa ubah skema) */
+function needsCheck(ref){
+  var tarif=Number(D.setting.tarif_default)||150000;
+  var al=allocOf(ref).filter(function(a){return a.kat==='membership'||a.kat==='non_member';});
+  if(al.length>1){
+    var bln={}; al.forEach(function(a){bln[a.bulan]=1;});
+    var noms=al.map(function(a){return +a.nominal;});
+    var allEq=noms.every(function(n){return Math.abs(n-noms[0])<0.01;});
+    if(Object.keys(bln).length>1 && allEq && Math.abs(noms[0]-tarif)>0.01) return true; // hasil bagi-rata, tarif tak biasa
+  }
+  if(al.length===1 && +al[0].nominal>=500000) return true; // nominal besar, mungkin donatur
+  return false;
+}
 
 function tagSummary(ref){
   const al=allocOf(ref); if(!al.length) return null;
@@ -212,74 +282,124 @@ function tagSummary(ref){
 }
 
 /* ============ views ============ */
+function monthsWithData(){var s={};D.rekening.forEach(function(r){var m=monthOf(r);if(m>=0)s[m]=1;});return Object.keys(s).map(Number).sort(function(a,b){return a-b;});}
+function monthFilter(cur,varName){
+  var opts='<option value="all"'+(cur==='all'?' selected':'')+'>Semua bulan</option>'+
+    monthsWithData().map(function(m){return '<option value="'+m+'"'+(String(cur)===String(m)?' selected':'')+'>'+MONTHS[m]+'</option>';}).join("");
+  return '<select onchange="'+varName+'=this.value===\'all\'?\'all\':+this.value;render()">'+opts+'</select>';
+}
+function passMonth(r,cur){return cur==='all'||monthOf(r)===+cur;}
 function rekeningView(){
-  const toolbar='<div class="toolbar"><p class="lead" style="margin:0">Rekening koran</p><button class="btn primary" onclick="openImport()">Import PDF BCA</button></div>';
+  const toolbar='<div class="toolbar"><p class="lead" style="margin:0">Rekening koran</p><span style="display:flex;gap:8px"><button class="btn" onclick="resetAll()">Reset data</button><button class="btn primary" onclick="openImport()">Import PDF BCA</button></span></div>';
   if(!D.rekening.length) return toolbar+emptyState("Belum ada baris rekening. Klik <b>Import PDF BCA</b> untuk tarik mutasi dari e-Statement. Saldo awal terisi otomatis dari statement pertama.");
-  const rows=D.rekening.map(r=>{
+  const rows=D.rekening.filter(r=>passMonth(r,fRek)).map(r=>{
     const s=tagSummary(r.id);
     const st=!s?'<span class="st"><span class="d" style="background:var(--copper)"></span><span style="color:var(--copper-d)">belum di-tag</span></span>'
       :'<span class="st"><span class="d" style="background:'+(s.op?'var(--in)':'var(--faint)')+'"></span><span>'+s.txt+'</span></span>';
     const bukti=r.bukti?'<a href="'+r.bukti+'" target="_blank">lihat bukti</a>':'';
-    return '<tr class="clickable" onclick="openTag(\''+r.id+'\')"><td class="idx">'+r.tgl+'</td>'+
+    return '<tr class="clickable" onclick="openTag(\''+r.id+'\')"><td class="idx">'+fmtTgl(r)+'</td>'+
       '<td class="ket">'+r.ket+'<span class="raw">'+r.raw+' '+bukti+'</span></td>'+
       '<td class="num '+(r.arah==='CR'?'cr':'db')+'">'+(r.arah==='CR'?'+':'−')+rp(r.nominal)+'</td>'+
       '<td class="num" style="color:var(--muted)">'+rp(r.saldo)+'</td><td>'+st+'</td></tr>';
   }).join("");
-  return toolbar+'<p class="sub">Baris mentah dari BCA, apa adanya. CR = pemasukan, DB = pengeluaran. Klik baris untuk validasi, pecah jadi alokasi, dan lampirkan bukti.</p>'+
+  return toolbar+'<div class="controls">'+monthFilter(fRek,'fRek')+'</div><p class="sub">Baris mentah dari BCA, apa adanya. CR = pemasukan, DB = pengeluaran. Klik baris untuk validasi, pecah jadi alokasi, dan lampirkan bukti.</p>'+
     '<div class="card"><table><thead><tr><th>Tgl</th><th>Keterangan</th><th class="num">Mutasi</th><th class="num">Saldo</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
 function taggingView(){
   if(!D.rekening.length) return emptyState("Belum ada baris rekening untuk di-tag.");
-  const order=[...D.rekening].sort((a,b)=>(isTagged(a.id)?1:0)-(isTagged(b.id)?1:0));
+  const order=[...D.rekening].filter(r=>passMonth(r,fTag)).sort((a,b)=>(isTagged(a.id)?1:0)-(isTagged(b.id)?1:0));
   const rows=order.map(r=>{
-    const detail=isTagged(r.id)?allocOf(r.id).map(a=>{
+    const cek=isTagged(r.id)&&needsCheck(r.id)?'<span class="cek" title="hasil auto-tag, mungkin perlu dibetulin">⚠ cek</span> ':'';
+    const detail=isTagged(r.id)?cek+allocOf(r.id).map(a=>{
       const who=a.member?memName(a.member).split(" ")[0]:(a.nama||(CATS[a.kat]?CATS[a.kat].label:a.kat));
       const q=a.qty?(" "+a.qty+a.satuan):""; const b=(CATS[a.kat]&&CATS[a.kat].member)?(" "+MONTHS[a.bulan]):"";
       return '<span class="pill">'+(CATS[a.kat]?CATS[a.kat].label.replace(" (non-op)",""):a.kat)+": "+who+b+q+'</span>';
-    }).join(" "):'<span style="color:var(--copper-d)">menunggu validasi admin</span>';
-    return '<tr class="clickable" onclick="openTag(\''+r.id+'\')"><td class="idx">'+r.tgl+'</td>'+
+    }).join(" "):'<span style="color:var(--copper-d)">belum di-tag</span>';
+    return '<tr class="clickable" onclick="openTag(\''+r.id+'\')"><td class="idx">'+fmtTgl(r)+'</td>'+
       '<td class="num '+(r.arah==='CR'?'cr':'db')+'">'+r.arah+'</td><td class="num">'+rp(r.nominal)+'</td>'+
       '<td style="font-size:13px">'+detail+'</td></tr>';
   }).join("");
   const todo=D.rekening.filter(r=>!isTagged(r.id)).length;
-  return '<p class="lead">Tagging &amp; alokasi</p><p class="sub">Pecah satu baris bank jadi beberapa alokasi — beda member, beda bulan, atau campuran lapangan + shuttlecock. Total alokasi wajib sama dengan nominal bank. '+(todo?'<b style="color:var(--copper-d)">'+todo+' baris belum di-tag.</b>':'Semua sudah di-tag.')+'</p>'+
+  const bar='<div class="toolbar"><p class="lead" style="margin:0">Tagging &amp; alokasi</p>'+(isAdmin&&todo?'<button class="btn primary" onclick="autoTagAll()">⚡ Auto-tag semua ('+todo+')</button>':'')+'</div>';
+  return bar+'<div class="controls">'+monthFilter(fTag,'fTag')+'</div>'+
+    '<p class="sub">Pecah satu baris bank jadi beberapa alokasi — beda member, beda bulan, atau campuran lapangan + shuttlecock. Total alokasi wajib sama dengan nominal bank. '+(todo?'<b style="color:var(--copper-d)">'+todo+' baris belum di-tag.</b> Klik <b>Auto-tag semua</b> untuk isi otomatis dari keterangan, lalu betulin yang bertanda ⚠.':'Semua sudah di-tag.')+'</p>'+
     '<div class="card"><table><thead><tr><th>Tgl</th><th>Arah</th><th class="num">Nominal</th><th>Alokasi</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
 function membershipView(){
-  if(!D.members.length) return emptyState("Belum ada member. Isi tab Member di Sheet.");
-  const head=MONTHS.map(m=>'<th class="num" style="text-align:center">'+m+'</th>').join("");
-  const body=D.members.map(mb=>{
+  if(!D.members.length) return emptyState("Belum ada member. Jalankan Auto-tag di tab Tagging atau isi tab Member di Sheet.");
+  const head='<th class="num">No</th><th class="name">Member</th>'+MONTHS.map(m=>'<th class="num" style="text-align:center">'+m+'</th>').join("");
+  const totals=MONTHS.map(function(){return 0;});
+  const body=D.members.map((mb,ri)=>{
     const cells=MONTHS.map((_,i)=>{
-      const lunas=D.alokasi.some(a=>a.kat==="membership"&&a.member===mb.id&&a.bulan===i);
+      const lunas=D.alokasi.some(a=>a.kat==="membership"&&a.member===mb.id&&+a.bulan===i);
+      if(lunas)totals[i]++;
       return '<td class="m"><span class="cell '+(lunas?'lunas':'belum')+'">'+(lunas?'✓':'·')+'</span></td>';
     }).join("");
-    return '<tr><td class="name">'+mb.nama+'</td>'+cells+'</tr>';
+    return '<tr><td class="num" style="color:var(--muted)">'+(ri+1)+'</td><td class="name">'+mb.nama+'</td>'+cells+'</tr>';
   }).join("");
-  return '<p class="lead">Membership — '+(D.setting.tahun||new Date().getFullYear())+'</p><p class="sub">Status lunas per member per bulan, dihitung dari alokasi (pakai bulan yang dicover, bukan tanggal bayar).</p>'+
-    '<div class="matrix"><table><thead><tr><th class="name">Member</th>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+  const totalRow='<tr class="totrow"><td></td><td class="name" style="font-weight:600">Σ member lunas</td>'+
+    totals.map(t=>'<td class="m" style="font-weight:600;color:var(--copper-d)">'+(t||'·')+'</td>').join("")+'</tr>';
+  return '<p class="lead">Membership — '+(D.setting.tahun||new Date().getFullYear())+'</p><p class="sub">Status lunas per member per bulan, dihitung dari alokasi (pakai bulan yang dicover, bukan tanggal bayar). Baris bawah = jumlah member lunas tiap bulan.</p>'+
+    '<div class="matrix"><table><thead><tr>'+head+'</tr></thead><tbody>'+body+totalRow+'</tbody></table></div>';
 }
 
-function inScopeRek(r){var cm=monthOf(r);if(scope==="bulan")return cm===selMonth;if(scope==="periode")return PERIODS[selPeriod].indexOf(cm)>=0;return true;}
+function evaluasiView(){
+  var present={}; D.alokasi.forEach(function(a){if(a.bulan!=null&&a.bulan!=='')present[+a.bulan]=1;});
+  var months=Object.keys(present).map(Number).sort(function(a,b){return a-b;});
+  if(evalM===null) evalM = months.length?months[months.length-1]:(typeof toM==='number'?toM:0);
+  var picker='<select onchange="evalM=+this.value;render()">'+MONTHS.map(function(m,i){return '<option value="'+i+'" '+(i===evalM?'selected':'')+'>'+m+'</option>';}).join("")+'</select>';
+  var A=D.alokasi.filter(function(a){return +a.bulan===evalM;});
+  function sum(k){return A.filter(function(a){return a.kat===k;}).reduce(function(s,a){return s+(+a.nominal||0);},0);}
+  function qty(k){return A.filter(function(a){return a.kat===k;}).reduce(function(s,a){return s+(+a.qty||0);},0);}
+  function uniq(arr){return Object.keys(arr.reduce(function(o,x){o[x]=1;return o;},{})).filter(Boolean);}
+  var memSum=sum('membership'), memCount=uniq(A.filter(function(a){return a.kat==='membership';}).map(function(a){return a.member;})).length;
+  var nonSum=sum('non_member'), nonCount=uniq(A.filter(function(a){return a.kat==='non_member';}).map(function(a){return a.nama;})).length;
+  var donSum=sum('donatur'), donNames=uniq(A.filter(function(a){return a.kat==='donatur';}).map(function(a){return a.nama;}));
+  var bungaSum=sum('bunga');
+  var lapJam=qty('lapangan'), lapSum=sum('lapangan'), shSlop=qty('shuttlecock'), shSum=sum('shuttlecock');
+  var lainSum=sum('lain_lain'), bankSum=sum('biaya_bank');
+  var inAll=memSum+nonSum+donSum+bungaSum, outAll=lapSum+shSum+lainSum+bankSum, net=inAll-outAll;
+  function row(lbl,val,sub){return '<div class="row"'+(sub?' style="color:var(--muted)"':'')+'><span>'+lbl+'</span><span class="n">'+rp(val)+'</span></div>';}
+  var inHtml=row('Membership · '+memCount+' member',memSum)+row('Non-member · '+nonCount+' orang',nonSum)+
+    row('Donatur'+(donNames.length?' · '+donNames.join(", "):''),donSum)+row('Bunga (non-op)',bungaSum,true);
+  var outHtml=row('Lapangan · '+lapJam+' jam',lapSum)+row('Shuttlecock · '+shSlop+' slop',shSum)+
+    row('Lain-lain',lainSum)+row('Biaya bank (non-op)',bankSum,true);
+  var verdict=net>=0?'Surplus bulan ini':'Defisit bulan ini';
+  var card='<div class="panel" style="margin-bottom:14px"><h3>Evaluasi '+MONTHS[evalM]+'</h3>'+
+    '<div class="row"><span>Total pemasukan (untuk '+MONTHS[evalM]+')</span><span class="n" style="color:var(--in)">'+rp(inAll)+'</span></div>'+
+    '<div class="row"><span>Total pengeluaran (untuk '+MONTHS[evalM]+')</span><span class="n" style="color:var(--out)">'+rp(outAll)+'</span></div>'+
+    '<div class="row" style="border-top:1px solid var(--line);font-weight:600"><span>'+verdict+'</span><span class="n" style="color:'+(net>=0?'var(--in)':'var(--out)')+'">'+(net<0?'−':'')+rp(Math.abs(net))+'</span></div></div>';
+  return '<div class="toolbar"><p class="lead" style="margin:0">Evaluasi bulanan</p></div>'+
+    '<div class="controls">'+picker+'</div>'+
+    '<p class="sub">Dihitung dari <b>bulan yang dibayar</b> (covered month), bukan tanggal transfer — buat cek apakah pemasukan suatu bulan menutup pengeluarannya. Beda dengan Dashboard yang basisnya tanggal rekening.</p>'+
+    card+
+    '<div class="two"><div class="panel"><h3>Pemasukan untuk '+MONTHS[evalM]+'</h3>'+inHtml+'</div>'+
+    '<div class="panel"><h3>Pengeluaran untuk '+MONTHS[evalM]+'</h3>'+outHtml+'</div></div>';
+}
+
+function inScopeRek(r){var cm=monthOf(r);if(cm<0)return false;if(scope==="bulan"){var a=Math.min(fromM,toM),b=Math.max(fromM,toM);return cm>=a&&cm<=b;}return true;}
 function inScope(a){return inScopeRek(rek(a.ref)||{});}
 function setScope(s){scope=s;render();}
 function dashboardView(){
   var M=MONTHS;
-  var segs=[["bulan","Bulan"],["periode","Periode"],["tahun","Tahun"]]
+  var segs=[["bulan","Bulan"],["tahun","Tahun"]]
     .map(function(s){return '<button aria-pressed="'+(scope===s[0])+'" onclick="setScope(\''+s[0]+'\')">'+s[1]+'</button>';}).join("");
   var picker='';
-  if(scope==='bulan') picker='<select onchange="selMonth=+this.value;render()">'+M.map(function(m,i){return '<option value="'+i+'" '+(i===selMonth?'selected':'')+'>'+m+'</option>';}).join("")+'</select>';
-  else if(scope==='periode') picker='<select onchange="selPeriod=+this.value;render()">'+PERIODS.map(function(p,i){return '<option value="'+i+'" '+(i===selPeriod?'selected':'')+'>'+periodLabel(i)+'</option>';}).join("")+'</select>';
+  if(scope==='bulan'){
+    var opt=function(sel){return M.map(function(m,i){return '<option value="'+i+'" '+(i===sel?'selected':'')+'>'+m+'</option>';}).join("");};
+    picker='<span class="rangepick">Dari <select onchange="fromM=+this.value;if(toM<fromM)toM=fromM;render()">'+opt(fromM)+'</select> sampai <select onchange="toM=+this.value;if(fromM>toM)fromM=toM;render()">'+opt(toM)+'</select></span>';
+  }
   var controls='<div class="seg">'+segs+'</div>'+(picker?'<div class="controls">'+picker+'</div>':'');
   var head='<div class="toolbar"><p class="lead" style="margin:0">Dashboard</p><button class="btn" onclick="openPembayaran()">Kirim bukti bayar</button></div>';
 
   var masuk=D.rekening.filter(function(r){return r.arah==="CR"&&inScopeRek(r);}).reduce(function(s,r){return s+r.nominal;},0);
   var keluar=D.rekening.filter(function(r){return r.arah==="DB"&&inScopeRek(r);}).reduce(function(s,r){return s+r.nominal;},0);
-  var firstM = scope==='periode'?PERIODS[selPeriod][0]:(scope==='tahun'?0:selMonth);
-  var lastM  = scope==='periode'?PERIODS[selPeriod][1]:(scope==='tahun'?11:selMonth);
+  var firstM = scope==='tahun'?0:Math.min(fromM,toM);
+  var lastM  = scope==='tahun'?11:Math.max(fromM,toM);
   var saldoAwalPertama = (D.setting.saldo_awal===''||D.setting.saldo_awal==null)?null:Number(D.setting.saldo_awal);
-  var sortedRek = D.rekening.slice().sort(function(a,b){var da=parseInt(a.tgl.slice(3,5),10)*100+parseInt(a.tgl.slice(0,2),10),db=parseInt(b.tgl.slice(3,5),10)*100+parseInt(b.tgl.slice(0,2),10);return da-db;});
+  var sortedRek = D.rekening.slice().sort(function(a,b){return (monthOf(a)*100+dayOf(a))-(monthOf(b)*100+dayOf(b));});
   function saldoUpto(m){var last=null;sortedRek.forEach(function(r){if(monthOf(r)<=m)last=r;});return last?last.saldo:saldoAwalPertama;}
   function rpN(v){return (v==null||isNaN(v))?'—':rp(v);}
   var saldoAkhir = saldoUpto(lastM);
@@ -313,7 +433,13 @@ function dashboardView(){
     Object.keys(CATS).filter(function(k){return CATS[k].arah===arah;}).forEach(function(k){
       var items=act.filter(function(a){return a.kat===k;}); var tot=items.reduce(function(s,a){return s+(+a.nominal);},0);
       if(tot<=0) return;
-      html+='<div class="row"'+(!CATS[k].op?' style="color:var(--muted)"':'')+'><span>'+CATS[k].label+'</span><span class="n">'+rp(tot)+'</span></div>';
+      var moAnn='';
+      if(k==='lapangan'||k==='shuttlecock'){
+        var bs={}; items.forEach(function(a){if(a.bulan!=null&&a.bulan!=='')bs[+a.bulan]=1;});
+        var ms=Object.keys(bs).map(Number).sort(function(a,b){return a-b;}).map(function(b){return MONTHS[b];});
+        if(ms.length) moAnn=' <span class="mo">'+ms.join(", ")+'</span>';
+      }
+      html+='<div class="row"'+(!CATS[k].op?' style="color:var(--muted)"':'')+'><span>'+CATS[k].label+moAnn+'</span><span class="n">'+rp(tot)+'</span></div>';
       if(expandKats.indexOf(k)>=0){
         var g={}; items.forEach(function(a){var key=a.nama||"(tanpa nama)";g[key]=(g[key]||0)+(+a.nominal);});
         Object.keys(g).forEach(function(nm){html+='<div class="row sub"><span>· '+nm+'</span><span class="n">'+rp(g[nm])+'</span></div>';});
@@ -328,24 +454,23 @@ function dashboardView(){
   var slop=act.filter(function(a){return a.kat==="shuttlecock";}).reduce(function(s,a){return s+(+a.qty||0);},0);
   var ops='<div class="opslist"><div class="ops"><span class="big">'+jam+'</span><span class="lbl">jam lapangan</span><span style="flex:1"></span><span class="big">'+slop+'</span><span class="lbl">slop kok</span></div></div>';
 
-  var monthsInScope = scope==='bulan' ? [selMonth] : PERIODS[selPeriod];
   function roster(kat){
     var g={};
-    D.alokasi.filter(function(a){return a.kat===kat && monthsInScope.indexOf(a.bulan)>=0;}).forEach(function(a){
+    D.alokasi.filter(function(a){return a.kat===kat && inScope(a);}).forEach(function(a){
       var name = kat==='membership' ? memName(a.member) : (a.nama||"(tanpa nama)");
       (g[name]=g[name]||{})[a.bulan]=1;
     });
     var names=Object.keys(g);
     if(!names.length) return '<span style="color:var(--faint);font-size:13px">— belum ada —</span>';
     return '<div class="chips">'+names.map(function(nm){
-      var mos = scope==='periode' ? '<span class="mo">'+Object.keys(g[nm]).sort().map(function(b){return MONTHS[+b];}).join(", ")+'</span>' : '';
+      var mos='<span class="mo">'+Object.keys(g[nm]).map(Number).sort(function(a,b){return a-b;}).map(function(b){return MONTHS[b];}).join(", ")+'</span>';
       return '<span class="chip">'+nm+mos+'</span>';
     }).join("")+'</div>';
   }
-  var rosters='<div class="rosters"><div class="panel roster"><h3>Membership</h3>'+roster('membership')+'</div>'+
-    '<div class="panel roster"><h3>Non-member</h3>'+roster('non_member')+'</div></div>';
+  var rosters='<div class="rosters"><div class="panel roster"><h3>Pembayaran Membership</h3>'+roster('membership')+'</div>'+
+    '<div class="panel roster"><h3>Pembayaran Non-member</h3>'+roster('non_member')+'</div></div>';
 
-  var coLbl = scope==='bulan'?MONTHS[lastM]:(MONTHS[firstM]+'–'+MONTHS[lastM]);
+  var coLbl = firstM===lastM?MONTHS[lastM]:(MONTHS[firstM]+'–'+MONTHS[lastM]);
   var awalLbl = firstM>0?('akhir '+MONTHS[firstM-1]):'saldo awal pertama';
   var saldoCard='<div class="panel" style="margin-bottom:14px"><h3>Saldo bank · cut-off '+coLbl+'</h3>'+
     '<div class="row"><span>Saldo awal ('+awalLbl+')</span><span class="n">'+rpN(saldoAwal)+'</span></div>'+
@@ -362,17 +487,43 @@ function emptyState(msg){return '<div class="panel" style="text-align:center;col
 
 /* ============ tag editor (admin) ============ */
 var editing=null;
+function resetAll(){
+  if(!isAdmin){ openLogin(); return; }
+  if(!confirm('HAPUS SEMUA data (rekening, alokasi, member, pembayaran, saldo awal)?\nTidak bisa dibatalkan.')) return;
+  if(!confirm('Yakin betul? Semua transaksi & tagging akan hilang. Lanjut?')) return;
+  if(DEMO){ D=SEED(); fromM=toM=evalM=null; afterLoad(); return; }
+  api('resetData',{pwd:PWD}).then(function(){ fromM=toM=evalM=null; reload(function(){alert('Data dikosongkan. Silakan Import PDF BCA lagi, lalu Auto-tag.');}); }).catch(function(e){alert(e.message);});
+}
+function autoTagAll(){
+  if(!isAdmin){ openLogin(); return; }
+  var untag=D.rekening.filter(function(r){return !isTagged(r.id);});
+  var nameToId={}; D.members.forEach(function(m){nameToId[m.nama.trim().toLowerCase()]=m.id;});
+  var newMembers=[], items=[], cnt=0;
+  function resolve(name){var key=(name||'').trim().toLowerCase();if(!key)return '';if(nameToId[key])return nameToId[key];var id='m'+Date.now()+'_'+newMembers.length;newMembers.push({id:id,nama:name});nameToId[key]=id;return id;}
+  untag.forEach(function(r){
+    var d=detectTag(r); if(!d.rows.length) return;
+    var rows=d.rows.map(function(x){var c=CATS[x.kat];return {kat:x.kat,member:c.member?resolve(x.member):'',nama:c.nama?(x.nama||''):'',bulan:+x.bulan,qty:c.qty?(+x.qty||''):'',satuan:c.qty?(x.satuan||c.satuan):'',nominal:+x.nominal};});
+    items.push({ref:r.id,rows:rows}); cnt+=rows.length;
+  });
+  if(!items.length){ alert('Tidak ada baris yang bisa di-auto-tag.'); return; }
+  if(!confirm('Auto-tag '+items.length+' transaksi (~'+cnt+' alokasi)?\nYang multi-bulan / nominal besar ditandai ⚠ "cek" — bisa kamu betulin setelahnya.')) return;
+  if(DEMO){ newMembers.forEach(function(m){D.members.push(m);}); items.forEach(function(it){it.rows.forEach(function(x,k){D.alokasi.push(Object.assign({id:'al'+Date.now()+'_'+Math.floor(Math.random()*1e6),ref:it.ref},x));});}); render(); return; }
+  api('saveAlokasiBatch',{pwd:PWD,items:items,newMembers:newMembers}).then(function(res){reload(function(){alert('Selesai — '+((res&&res.added)||cnt)+' alokasi dibuat. Cek baris bertanda ⚠.');});}).catch(function(e){alert(e.message);});
+}
 function openTag(ref){
   if(!isAdmin){ openLogin(); return; }
   var r=rek(ref), existing=allocOf(ref);
-  var defBulan = monthOf(r)>=0?monthOf(r):(selMonth||0);
+  var defBulan = monthOf(r)>=0?monthOf(r):(toM||0);
   var rows;
   if(existing.length) rows=existing.map(function(a){return {kat:a.kat,member:a.kat==='membership'?memName(a.member):"",nama:a.nama||"",bulan:a.bulan,qty:a.qty||"",satuan:a.satuan||"",nominal:a.nominal};});
   else{
-    var upper=(r.ket||"").toUpperCase();
-    var guess=D.members.find(function(m){return upper.indexOf(m.nama.toUpperCase())>=0;});
-    var defKat=r.arah==="CR"?"membership":"lapangan";
-    rows=[{kat:defKat,member:guess?guess.nama:"",nama:"",bulan:defBulan,qty:"",satuan:CATS[defKat].satuan||"",nominal:r.nominal}];
+    var d=detectTag(r);
+    if(d.rows && d.rows.length){
+      rows=d.rows.map(function(x){return {kat:x.kat,member:x.member||"",nama:x.nama||"",bulan:x.bulan,qty:x.qty||"",satuan:x.satuan||(CATS[x.kat].satuan||""),nominal:x.nominal};});
+    } else {
+      var defKat=r.arah==="CR"?"membership":"lapangan";
+      rows=[{kat:defKat,member:"",nama:"",bulan:defBulan,qty:"",satuan:CATS[defKat].satuan||"",nominal:r.nominal}];
+    }
   }
   editing={ref:ref,rows:rows}; renderEditor();
 }
@@ -398,7 +549,7 @@ function renderEditor(){
   const valid=ok&&editing.rows.every(x=>{const c=CATS[x.kat];if(c.member&&!x.member)return false;if(c.qty&&!(+x.qty>0))return false;return +x.nominal>0;});
   const buktiLine=r.bukti?'<a href="'+r.bukti+'" target="_blank">lihat bukti</a>':'<span style="color:var(--faint)">belum ada</span>';
   modal('<h2>Pecah baris jadi alokasi</h2>'+
-    '<div class="bankline"><span>'+r.tgl+' · '+r.arah+' · '+r.ket+'</span><span>'+rp(r.nominal)+'</span></div>'+
+    '<div class="bankline"><span>'+fmtTgl(r)+' · '+r.arah+' · '+r.ket+'</span><span>'+rp(r.nominal)+'</span></div>'+
     '<div class="buktirow">Bukti: '+buktiLine+' <label class="addrow" style="cursor:pointer">+ lampirkan<input type="file" accept="image/*,application/pdf" style="display:none" onchange="attachBukti(this)"></label></div>'+
     '<div class="ahead"><span>Kategori</span><span>Member / nama</span><span>Bulan</span><span>Qty</span><span>Satuan</span><span>Nominal</span><span></span></div>'+
     editing.rows.map(editorRow).join("")+
@@ -589,8 +740,8 @@ function writeImport(){
 /* ============ shell ============ */
 function modal(inner){document.getElementById('editor').innerHTML='<div class="sheet">'+inner+'</div>';document.getElementById('editor').hidden=false;}
 function closeModal(){document.getElementById('editor').hidden=true;document.getElementById('editor').innerHTML='';editing=null;}
-function allowedTabs(){return isAdmin?['dashboard','membership','tagging','rekening']:['dashboard','membership'];}
-const TABLABEL={dashboard:"Dashboard",membership:"Membership",tagging:"Tagging",rekening:"Rekening"};
+function allowedTabs(){return isAdmin?['dashboard','evaluasi','membership','tagging','rekening']:['dashboard','evaluasi','membership'];}
+const TABLABEL={dashboard:"Dashboard",evaluasi:"Evaluasi",membership:"Membership",tagging:"Tagging",rekening:"Rekening"};
 function renderNav(){
   const ts=allowedTabs(); if(ts.indexOf(tab)<0) tab='dashboard';
   document.getElementById('nav').innerHTML=ts.map(t=>'<button data-tab="'+t+'" aria-current="'+(t===tab)+'">'+TABLABEL[t]+'</button>').join("");
@@ -603,7 +754,7 @@ function renderAuth(){
 function render(){
   renderNav(); renderAuth();
   document.getElementById('view').innerHTML=
-    tab==='dashboard'?dashboardView():tab==='membership'?membershipView():tab==='tagging'?taggingView():rekeningView();
+    tab==='dashboard'?dashboardView():tab==='evaluasi'?evaluasiView():tab==='membership'?membershipView():tab==='tagging'?taggingView():rekeningView();
 }
 document.getElementById('nav').addEventListener('click',function(e){var b=e.target.closest('button');if(b){tab=b.dataset.tab;render();}});
 document.getElementById('editor').addEventListener('click',function(e){if(e.target.id==='editor')closeModal();});
