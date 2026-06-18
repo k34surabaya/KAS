@@ -125,7 +125,16 @@
     background:var(--copper-d);color:#fff;font-size:14px;padding:11px 18px;border-radius:999px;box-shadow:0 8px 24px rgba(0,0,0,.22)}
   .busyp[hidden]{display:none}
   .busyp .spin{width:15px;height:15px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;flex:0 0 auto}
+  .evmonth{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--copper-d);margin:18px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
   @keyframes spin{to{transform:rotate(360deg)}}
+  .tempb{display:inline-block;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--copper-d);background:var(--copper-soft);border:1px dashed var(--copper);border-radius:5px;padding:1px 6px;vertical-align:middle}
+  .tempform{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .tempform label{display:flex;flex-direction:column;gap:4px;font-size:11px;font-family:var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .tempform label.wide{grid-column:1/-1}
+  .tempform input,.tempform select{font-family:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
+  .xbtn{appearance:none;border:1px solid var(--line);background:var(--surface);color:var(--out);width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:15px;line-height:1}
+  .xbtn:hover{background:var(--surface-2)}
+  @media (max-width:720px){ .tempform{grid-template-columns:1fr 1fr} }
 </style>
 </head>
 <body>
@@ -141,6 +150,7 @@
 <div id="busy" class="busyp" hidden><span class="spin"></span><span id="busyt">Memproses…</span></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
   if (typeof pdfjsLib !== 'undefined') pdfjsLib.GlobalWorkerOptions.workerSrc =
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -151,7 +161,7 @@
 var API_URL = 'https://script.google.com/macros/s/AKfycbzmwrrRCc_Tv1BrK8li7CwHh13OkndZRYr-7tqZf_FOSQwEx9MoKShlrQZ3AP26o5GT/exec';
 
 var DEMO=false, PWD='', isAdmin=false, tab='dashboard', scope='bulan', fromM=null, toM=null;
-var fTag='all', fRek='all', evalM=null;
+var fTag='all', fRek='all', evalFromM=null, evalToM=null;
 
 function api(action, data){
   return fetch(API_URL, {
@@ -160,7 +170,7 @@ function api(action, data){
     body: JSON.stringify(Object.assign({action:action}, data||{}))
   }).then(function(r){return r.json();}).then(function(j){ if(!j.ok) throw new Error(j.error||'Gagal'); return j.result; });
 }
-var D={setting:{tarif_default:150000},members:[],rekening:[],alokasi:[],pembayaran:[]};
+var D={setting:{tarif_default:150000},members:[],rekening:[],alokasi:[],pembayaran:[],temp:[]};
 const SALDO_AWAL=10006263.73;
 
 function SEED(){return {
@@ -168,7 +178,8 @@ function SEED(){return {
   members:[],
   rekening:[],
   alokasi:[],
-  pembayaran:[]
+  pembayaran:[],
+  temp:[]
 };}
 
 function boot(){
@@ -339,56 +350,162 @@ function taggingView(){
 
 function membershipView(){
   if(!D.members.length) return emptyState("Belum ada member. Jalankan Auto-tag di tab Tagging atau isi tab Member di Sheet.");
+  // bulan lunas per member, dari alokasi membership (pakai bulan yang dicover)
+  var rows=D.members.map(function(mb){
+    var mset=[];
+    MONTHS.forEach(function(_,i){ if(D.alokasi.some(function(a){return a.kat==="membership"&&a.member===mb.id&&+a.bulan===i;})) mset.push(i); });
+    return {mb:mb, months:mset, latest:(mset.length?Math.max.apply(null,mset):-1), count:mset.length};
+  }).filter(function(x){return x.count>0;});                       // hapus member yg ga ada bulannya
+  if(!rows.length) return emptyState("Belum ada member yang punya bulan membership.");
+  rows.sort(function(a,b){ return (b.latest-a.latest) || (b.count-a.count) || String(a.mb.nama).localeCompare(String(b.mb.nama)); }); // terbaru, lalu terbanyak
   const head='<th class="num">No</th><th class="name">Member</th>'+MONTHS.map(m=>'<th class="num" style="text-align:center">'+m+'</th>').join("");
   const totals=MONTHS.map(function(){return 0;});
-  const body=D.members.map((mb,ri)=>{
+  const body=rows.map(function(x,ri){
     const cells=MONTHS.map((_,i)=>{
-      const lunas=D.alokasi.some(a=>a.kat==="membership"&&a.member===mb.id&&+a.bulan===i);
+      const lunas=x.months.indexOf(i)>=0;
       if(lunas)totals[i]++;
       return '<td class="m"><span class="cell '+(lunas?'lunas':'belum')+'">'+(lunas?'✓':'·')+'</span></td>';
     }).join("");
-    return '<tr><td class="num" style="color:var(--muted)">'+(ri+1)+'</td><td class="name">'+mb.nama+'</td>'+cells+'</tr>';
+    return '<tr><td class="num" style="color:var(--muted)">'+(ri+1)+'</td><td class="name">'+x.mb.nama+'</td>'+cells+'</tr>';
   }).join("");
   const totalRow='<tr class="totrow"><td></td><td class="name" style="font-weight:600">Σ member lunas</td>'+
     totals.map(t=>'<td class="m" style="font-weight:600;color:var(--copper-d)">'+(t||'·')+'</td>').join("")+'</tr>';
-  return '<p class="lead">Membership — '+(D.setting.tahun||new Date().getFullYear())+'</p><p class="sub">Status lunas per member per bulan, dihitung dari alokasi (pakai bulan yang dicover, bukan tanggal bayar). Baris bawah = jumlah member lunas tiap bulan.</p>'+
+  return '<p class="lead">Membership — '+(D.setting.tahun||new Date().getFullYear())+'</p><p class="sub">Status lunas per member per bulan, dihitung dari alokasi (pakai bulan yang dicover, bukan tanggal bayar). Member yang belum punya bulan membership disembunyikan. Urut dari yang <b>terbaru</b> bayar, lalu <b>terbanyak</b> bulannya. Baris bawah = jumlah member lunas tiap bulan.</p>'+
     '<div class="matrix"><table><thead><tr>'+head+'</tr></thead><tbody>'+body+totalRow+'</tbody></table></div>';
 }
 
 function evaluasiView(){
   var present={}; D.alokasi.forEach(function(a){if(a.bulan!=null&&a.bulan!=='')present[+a.bulan]=1;});
   var months=Object.keys(present).map(Number).sort(function(a,b){return a-b;});
-  if(evalM===null) evalM = months.length?months[months.length-1]:(typeof toM==='number'?toM:0);
-  var picker='<select onchange="evalM=+this.value;render()">'+MONTHS.map(function(m,i){return '<option value="'+i+'" '+(i===evalM?'selected':'')+'>'+m+'</option>';}).join("")+'</select>';
-  var A=D.alokasi.filter(function(a){return +a.bulan===evalM;});
-  function sum(k){return A.filter(function(a){return a.kat===k;}).reduce(function(s,a){return s+(+a.nominal||0);},0);}
-  function qty(k){return A.filter(function(a){return a.kat===k;}).reduce(function(s,a){return s+(+a.qty||0);},0);}
+  if(evalFromM===null){ var latest=months.length?months[months.length-1]:(typeof toM==='number'?toM:0); evalFromM=latest; evalToM=latest; }
+  var opt=function(sel){return MONTHS.map(function(m,i){return '<option value="'+i+'" '+(i===sel?'selected':'')+'>'+m+'</option>';}).join("");};
+  var picker='<span class="rangepick">Dari <select onchange="evalFromM=+this.value;if(evalToM<evalFromM)evalToM=evalFromM;render()">'+opt(evalFromM)+'</select> sampai <select onchange="evalToM=+this.value;if(evalFromM>evalToM)evalFromM=evalToM;render()">'+opt(evalToM)+'</select></span>';
+  var a0=Math.min(evalFromM,evalToM), b0=Math.max(evalFromM,evalToM);
+  var lbl = a0===b0?MONTHS[a0]:(MONTHS[a0]+'–'+MONTHS[b0]);
+
+  function rowL(lbl,val,sub){return '<div class="row"'+(sub?' style="color:var(--muted)"':'')+'><span>'+lbl+'</span><span class="n">'+rp(val)+'</span></div>';}
   function uniq(arr){return Object.keys(arr.reduce(function(o,x){o[x]=1;return o;},{})).filter(Boolean);}
-  var memSum=sum('membership'), memCount=uniq(A.filter(function(a){return a.kat==='membership';}).map(function(a){return a.member;})).length;
-  var nonSum=sum('non_member'), nonCount=uniq(A.filter(function(a){return a.kat==='non_member';}).map(function(a){return a.nama;})).length;
-  var donSum=sum('donatur'), donNames=uniq(A.filter(function(a){return a.kat==='donatur';}).map(function(a){return a.nama;}));
-  var bungaSum=sum('bunga');
-  var lapJam=qty('lapangan'), lapSum=sum('lapangan'), shSlop=qty('shuttlecock'), shSum=sum('shuttlecock');
-  var lainSum=sum('lain_lain'), bankSum=sum('biaya_bank');
-  var inAll=memSum+nonSum+donSum+bungaSum, outAll=lapSum+shSum+lainSum+bankSum, net=inAll-outAll;
-  function row(lbl,val,sub){return '<div class="row"'+(sub?' style="color:var(--muted)"':'')+'><span>'+lbl+'</span><span class="n">'+rp(val)+'</span></div>';}
-  var inHtml=row('Membership · '+memCount+' member',memSum)+row('Non-member · '+nonCount+' orang',nonSum)+
-    row('Donatur'+(donNames.length?' · '+donNames.join(", "):''),donSum)+row('Bunga (non-op)',bungaSum,true);
-  var outHtml=row('Lapangan · '+lapJam+' jam',lapSum)+row('Shuttlecock · '+shSlop+' slop',shSum)+
-    row('Lain-lain',lainSum)+row('Biaya bank (non-op)',bankSum,true);
-  var verdict=net>=0?'Surplus bulan ini':'Defisit bulan ini';
-  var card='<div class="panel" style="margin-bottom:14px"><h3>Evaluasi '+MONTHS[evalM]+'</h3>'+
-    '<div class="row"><span>Total pemasukan (untuk '+MONTHS[evalM]+')</span><span class="n" style="color:var(--in)">'+rp(inAll)+'</span></div>'+
-    '<div class="row"><span>Total pengeluaran (untuk '+MONTHS[evalM]+')</span><span class="n" style="color:var(--out)">'+rp(outAll)+'</span></div>'+
-    '<div class="row" style="border-top:1px solid var(--line);font-weight:600"><span>'+verdict+'</span><span class="n" style="color:'+(net>=0?'var(--in)':'var(--out)')+'">'+(net<0?'−':'')+rp(Math.abs(net))+'</span></div></div>';
+  // hitung satu blok evaluasi untuk sekumpulan alokasi
+  function calc(A){
+    function sum(k){return A.filter(function(a){return a.kat===k;}).reduce(function(s,a){return s+(+a.nominal||0);},0);}
+    function qty(k){return A.filter(function(a){return a.kat===k;}).reduce(function(s,a){return s+(+a.qty||0);},0);}
+    var memSum=sum('membership'), memCount=uniq(A.filter(function(a){return a.kat==='membership';}).map(function(a){return a.member;})).length;
+    var nonSum=sum('non_member'), nonCount=uniq(A.filter(function(a){return a.kat==='non_member';}).map(function(a){return a.nama;})).length;
+    var donSum=sum('donatur'), donNames=uniq(A.filter(function(a){return a.kat==='donatur';}).map(function(a){return a.nama;}));
+    var bungaSum=sum('bunga');
+    var lapJam=qty('lapangan'), lapSum=sum('lapangan'), shSlop=qty('shuttlecock'), shSum=sum('shuttlecock');
+    var lainSum=sum('lain_lain'), bankSum=sum('biaya_bank');
+    var inAll=memSum+nonSum+donSum+bungaSum, outAll=lapSum+shSum+lainSum+bankSum;
+    var inHtml=rowL('Membership · '+memCount+' member',memSum)+rowL('Non-member · '+nonCount+' orang',nonSum)+
+      rowL('Donatur'+(donNames.length?' · '+donNames.join(", "):''),donSum)+rowL('Bunga (non-op)',bungaSum,true);
+    var outHtml=rowL('Lapangan · '+lapJam+' jam',lapSum)+rowL('Shuttlecock · '+shSlop+' slop',shSum)+
+      rowL('Lain-lain',lainSum)+rowL('Biaya bank (non-op)',bankSum,true);
+    return {inAll:inAll,outAll:outAll,net:inAll-outAll,inHtml:inHtml,outHtml:outHtml};
+  }
+  var EVAL_SRC=D.alokasi.concat(tempList());                       // alokasi bank + entri sementara
+  function blockFor(m){ return calc(EVAL_SRC.filter(function(a){return +a.bulan===m;})); }
+
+  var Aall=EVAL_SRC.filter(function(a){var b=+a.bulan;return b>=a0&&b<=b0;});
+  var tempN=tempList().filter(function(t){var b=+t.bulan;return b>=a0&&b<=b0;}).length;
+  var tempBadge=tempN?' <span class="tempb">+ '+tempN+' sementara</span>':'';
+  var tot=calc(Aall);
+  var verdict=tot.net>=0?'Surplus periode ini':'Defisit periode ini';
+  var card='<div class="panel" style="margin-bottom:14px"><h3>Evaluasi '+lbl+tempBadge+'</h3>'+
+    '<div class="row"><span>Total pemasukan (untuk '+lbl+')</span><span class="n" style="color:var(--in)">'+rp(tot.inAll)+'</span></div>'+
+    '<div class="row"><span>Total pengeluaran (untuk '+lbl+')</span><span class="n" style="color:var(--out)">'+rp(tot.outAll)+'</span></div>'+
+    '<div class="row" style="border-top:1px solid var(--line);font-weight:600"><span>'+verdict+'</span><span class="n" style="color:'+(tot.net>=0?'var(--in)':'var(--out)')+'">'+(tot.net<0?'−':'')+rp(Math.abs(tot.net))+'</span></div></div>';
+
+  // tabel ringkas per bulan (semua bulan dalam rentang)
+  var summRows='', months2=[];
+  for(var m=a0;m<=b0;m++) months2.push(m);
+  summRows=months2.map(function(m){
+    var b=blockFor(m);
+    return '<tr><td class="name">'+MONTHS[m]+'</td>'+
+      '<td class="m" style="color:var(--in)">'+rp(b.inAll)+'</td>'+
+      '<td class="m" style="color:var(--out)">'+rp(b.outAll)+'</td>'+
+      '<td class="m" style="font-weight:600;color:'+(b.net>=0?'var(--in)':'var(--out)')+'">'+(b.net<0?'−':'')+rp(Math.abs(b.net))+'</td></tr>';
+  }).join("");
+  var summTot='<tr class="totrow"><td class="name" style="font-weight:600">Total '+lbl+'</td>'+
+    '<td class="m" style="font-weight:600;color:var(--in)">'+rp(tot.inAll)+'</td>'+
+    '<td class="m" style="font-weight:600;color:var(--out)">'+rp(tot.outAll)+'</td>'+
+    '<td class="m" style="font-weight:600;color:'+(tot.net>=0?'var(--in)':'var(--out)')+'">'+(tot.net<0?'−':'')+rp(Math.abs(tot.net))+'</td></tr>';
+  var summary = months2.length>1 ? '<div class="matrix" style="margin-bottom:14px"><table><thead><tr><th class="name">Bulan</th><th class="m">Pemasukan</th><th class="m">Pengeluaran</th><th class="m">Surplus/Defisit</th></tr></thead><tbody>'+summRows+summTot+'</tbody></table></div>' : '';
+
+  // detail breakdown per bulan (lewati bulan yg kosong biar ga penuh)
+  var detail=months2.map(function(m){
+    var has=EVAL_SRC.some(function(a){return +a.bulan===m;});
+    if(!has) return '';
+    var b=blockFor(m);
+    var net=b.net, head='<div class="row" style="border-top:1px solid var(--line);font-weight:600"><span>'+(net>=0?'Surplus':'Defisit')+'</span><span class="n" style="color:'+(net>=0?'var(--in)':'var(--out)')+'">'+(net<0?'−':'')+rp(Math.abs(net))+'</span></div>';
+    return '<h3 class="evmonth">Detail '+MONTHS[m]+'</h3>'+
+      '<div class="two" style="margin-bottom:14px"><div class="panel"><h3>Pemasukan '+MONTHS[m]+'</h3>'+b.inHtml+'</div>'+
+      '<div class="panel"><h3>Pengeluaran '+MONTHS[m]+'</h3>'+b.outHtml+head+'</div></div>';
+  }).join("");
+
   return '<div class="toolbar"><p class="lead" style="margin:0">Evaluasi bulanan</p></div>'+
     '<div class="controls">'+picker+'</div>'+
-    '<p class="sub">Dihitung dari <b>bulan yang dibayar</b> (covered month), bukan tanggal transfer — buat cek apakah pemasukan suatu bulan menutup pengeluarannya. Beda dengan Dashboard yang basisnya tanggal rekening.</p>'+
-    card+
-    '<div class="two"><div class="panel"><h3>Pemasukan untuk '+MONTHS[evalM]+'</h3>'+inHtml+'</div>'+
-    '<div class="panel"><h3>Pengeluaran untuk '+MONTHS[evalM]+'</h3>'+outHtml+'</div></div>';
+    '<p class="sub">Dihitung dari <b>bulan yang dibayar</b> (covered month), bukan tanggal transfer. Kartu di atas = total rentang; tabel = ringkas per bulan; di bawahnya rincian breakdown tiap bulan.</p>'+
+    card+summary+detail;
 }
 
+/* ============ entri sementara (cek proyeksi sebelum PDF keluar) ============ */
+function tempList(){return D.temp||[];}
+function sementaraView(){
+  if(!isAdmin) return emptyState("Khusus admin.");
+  if(DEMO) return emptyState("Mode demo — entri sementara butuh koneksi server.");
+  var cats=Object.keys(CATS);
+  var katOpt=cats.map(function(k){return '<option value="'+k+'">'+CATS[k].label.replace(" (non-op)","")+(CATS[k].arah==='CR'?' (masuk)':' (keluar)')+'</option>';}).join("");
+  var memOpt=(D.members||[]).slice().sort(function(a,b){return String(a.nama).localeCompare(String(b.nama));}).map(function(m){return '<option value="'+m.id+'">'+m.nama+'</option>';}).join("");
+  var monOpt=MONTHS.map(function(m,i){return '<option value="'+i+'">'+m+'</option>';}).join("");
+  var form='<div class="panel" style="margin-bottom:14px"><h3>Tambah entri sementara</h3>'+
+    '<div class="tempform">'+
+      '<label>Kategori<select id="tKat" onchange="tempFormSync()">'+katOpt+'</select></label>'+
+      '<label id="tMemWrap">Member<select id="tMem"><option value="">—</option>'+memOpt+'</select></label>'+
+      '<label id="tNamaWrap">Nama<input id="tNama" placeholder="nama bebas"></label>'+
+      '<label>Bulan (dicover)<select id="tBulan">'+monOpt+'</select></label>'+
+      '<label id="tQtyWrap">Qty<input id="tQty" type="number" min="0" placeholder="jam/slop"></label>'+
+      '<label>Nominal<input id="tNominal" type="number" min="0" placeholder="0"></label>'+
+      '<label class="wide">Catatan<input id="tKet" placeholder="opsional, mis. perkiraan iuran Juni"></label>'+
+    '</div>'+
+    '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn primary" onclick="addTempEntry()">+ Tambah</button>'+
+      (tempList().length?'<button class="btn" onclick="clearTempAll()">Hapus semua sementara</button>':'')+'</div></div>';
+  var rows=tempList().slice().sort(function(a,b){return (+a.bulan)-(+b.bulan);}).map(function(t){
+    var c=CATS[t.kat]||{label:t.kat,arah:'CR'};
+    var who=t.member?memName(t.member):(t.nama||'');
+    var q=(t.qty!==''&&t.qty!=null)?(' · '+t.qty+(t.satuan||c.satuan||'')):'';
+    var sign=c.arah==='CR'?'+':'−', col=c.arah==='CR'?'var(--in)':'var(--out)';
+    return '<tr><td><span class="tempb">sementara</span> '+c.label.replace(" (non-op)","")+(who?' · '+who:'')+q+(t.ket?' <span style="color:var(--muted)">— '+t.ket+'</span>':'')+'</td>'+
+      '<td class="num">'+(isNaN(+t.bulan)?'—':MONTHS[+t.bulan])+'</td>'+
+      '<td class="num" style="color:'+col+'">'+sign+rp(t.nominal)+'</td>'+
+      '<td class="num"><button class="xbtn" title="Hapus" onclick="delTemp(\''+t.id+'\')">×</button></td></tr>';
+  }).join("");
+  var list=tempList().length
+    ? '<div class="card"><table><thead><tr><th>Entri sementara</th><th class="num">Bulan</th><th class="num">Nominal</th><th class="num"></th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+    : emptyState("Belum ada entri sementara.");
+  return '<div class="toolbar"><p class="lead" style="margin:0">Entri sementara</p></div>'+
+    '<p class="sub">Buat proyeksi <b>sebelum PDF bulanan keluar</b>. Entri ini ikut dihitung di Evaluasi &amp; panel proyeksi Dashboard (ditandai <span class="tempb">sementara</span>), tapi <b>tidak</b> menyentuh data bank asli. Hapus begitu transaksi sungguhan sudah masuk lewat Import PDF.</p>'+
+    form+list;
+}
+function tempFormSync(){
+  var k=document.getElementById('tKat').value, c=CATS[k]||{};
+  function show(id,on){var el=document.getElementById(id); if(el) el.style.display=on?'':'none';}
+  show('tMemWrap', !!c.member); show('tNamaWrap', !!c.nama); show('tQtyWrap', !!c.qty);
+}
+function addTempEntry(){
+  if(!isAdmin){openLogin();return;}
+  var k=document.getElementById('tKat').value, c=CATS[k]||{};
+  var nominal=+document.getElementById('tNominal').value||0;
+  if(nominal<=0){alert('Nominal harus diisi.');return;}
+  var entry={kat:k, bulan:+document.getElementById('tBulan').value,
+    member:c.member?(document.getElementById('tMem').value||''):'',
+    nama:c.nama?(document.getElementById('tNama').value||''):'',
+    qty:c.qty?(+document.getElementById('tQty').value||''):'', satuan:c.satuan||'',
+    nominal:nominal, ket:document.getElementById('tKet').value||''};
+  busy('Menyimpan entri sementara…');
+  api('addTemp',{pwd:PWD,entry:entry}).then(function(){reload(function(){idle();});}).catch(function(e){idle();alert(e.message);});
+}
+function delTemp(id){ if(!isAdmin){openLogin();return;} busy('Menghapus…'); api('deleteTemp',{pwd:PWD,id:id}).then(function(){reload(function(){idle();});}).catch(function(e){idle();alert(e.message);}); }
+function clearTempAll(){ if(!isAdmin){openLogin();return;} if(!confirm('Hapus SEMUA entri sementara?'))return; busy('Menghapus…'); api('clearTemp',{pwd:PWD}).then(function(){reload(function(){idle();});}).catch(function(e){idle();alert(e.message);}); }
 function inScopeRek(r){var cm=monthOf(r);if(cm<0)return false;if(scope==="bulan"){var a=Math.min(fromM,toM),b=Math.max(fromM,toM);return cm>=a&&cm<=b;}return true;}
 function inScope(a){return inScopeRek(rek(a.ref)||{});}
 function setScope(s){scope=s;render();}
@@ -402,7 +519,7 @@ function dashboardView(){
     picker='<span class="rangepick">Dari <select onchange="fromM=+this.value;if(toM<fromM)toM=fromM;render()">'+opt(fromM)+'</select> sampai <select onchange="toM=+this.value;if(fromM>toM)fromM=toM;render()">'+opt(toM)+'</select></span>';
   }
   var controls='<div class="seg">'+segs+'</div>'+(picker?'<div class="controls">'+picker+'</div>':'');
-  var head='<div class="toolbar"><p class="lead" style="margin:0">Dashboard</p><button class="btn" onclick="openPembayaran()">Kirim bukti bayar</button></div>';
+  var head='<div class="toolbar"><p class="lead" style="margin:0">Dashboard</p><span style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn noshot" onclick="screenshotDash()">📷 Screenshot</button><button class="btn noshot" onclick="openPembayaran()">Kirim bukti bayar</button></span></div>';
 
   var masuk=D.rekening.filter(function(r){return r.arah==="CR"&&inScopeRek(r);}).reduce(function(s,r){return s+r.nominal;},0);
   var keluar=D.rekening.filter(function(r){return r.arah==="DB"&&inScopeRek(r);}).reduce(function(s,r){return s+r.nominal;},0);
@@ -488,12 +605,35 @@ function dashboardView(){
     '<div class="row" style="color:var(--out)"><span>− Pengeluaran</span><span class="n">'+rp(keluar)+'</span></div>'+
     '<div class="row" style="border-top:1px solid var(--line);font-weight:600"><span>Saldo akhir ('+MONTHS[lastM]+')</span><span class="n" style="color:var(--copper-d)">'+rpN(saldoAkhir)+'</span></div>'+
     (saldoAwalPertama===null?'<p class="hint" style="margin-top:8px;color:var(--out)">Saldo awal pertama belum keisi — otomatis terisi saat import statement pertama (Januari).</p>':'')+'</div>';
-  return head+controls+kpis+saldoCard+
+  var tempIn=tempList().filter(function(t){var c=CATS[t.kat]||{};var b=+t.bulan;return c.arah==='CR'&&b>=firstM&&b<=lastM;}).reduce(function(s,t){return s+(+t.nominal||0);},0);
+  var tempOut=tempList().filter(function(t){var c=CATS[t.kat]||{};var b=+t.bulan;return c.arah==='DB'&&b>=firstM&&b<=lastM;}).reduce(function(s,t){return s+(+t.nominal||0);},0);
+  var tempCount=tempList().filter(function(t){var b=+t.bulan;return b>=firstM&&b<=lastM;}).length;
+  var proyeksi=(saldoAkhir==null?null:saldoAkhir+tempIn-tempOut);
+  var tempPanel=tempCount?('<div class="panel" style="margin-bottom:14px;border:1px dashed var(--copper)"><h3>Cek sementara <span class="tempb">'+tempCount+' entri</span></h3>'+
+    '<div class="row" style="color:var(--in)"><span>+ Pemasukan sementara</span><span class="n">'+rp(tempIn)+'</span></div>'+
+    '<div class="row" style="color:var(--out)"><span>− Pengeluaran sementara</span><span class="n">'+rp(tempOut)+'</span></div>'+
+    '<div class="row" style="border-top:1px solid var(--line);font-weight:600"><span>Proyeksi saldo akhir (bank + sementara)</span><span class="n" style="color:var(--copper-d)">'+rpN(proyeksi)+'</span></div>'+
+    '<p class="hint" style="margin-top:8px;color:var(--muted)">KPI &amp; saldo bank di atas tetap murni dari rekening. Panel ini cuma proyeksi — hapus entri di tab Sementara setelah PDF masuk.</p></div>'):'';
+  return head+controls+kpis+saldoCard+tempPanel+
     (belum>0?'<div class="panel notif" style="margin-bottom:14px"><div class="row" style="border:0"><span class="t">⚠ '+rp(belum)+' udah masuk total, tapi belum dialokasikan — admin tag dulu biar rinciannya muncul.</span><span></span></div></div>':'')+
     '<div class="two"><div class="panel"><h3>Pemasukan</h3>'+breakdown("CR",masuk,["donatur"])+'</div>'+
     '<div class="panel"><h3>Pengeluaran</h3>'+breakdown("DB",keluar,["lain_lain"])+ops+'</div></div>'+rosters;
 }
 function emptyState(msg){return '<div class="panel" style="text-align:center;color:var(--muted);padding:40px">'+msg+'</div>';}
+function screenshotDash(){
+  var node=document.getElementById('view');
+  if(typeof html2canvas==='undefined'){ alert('Library screenshot belum termuat. Cek koneksi internet lalu coba lagi.'); return; }
+  var bg=getComputedStyle(document.body).backgroundColor||'#efe8da';
+  busy('Menyiapkan gambar…');
+  html2canvas(node,{backgroundColor:bg,scale:2,useCORS:true,ignoreElements:function(el){return el.classList&&el.classList.contains('noshot');}})
+    .then(function(canvas){
+      idle();
+      var a=document.createElement('a');
+      a.download='dashboard-kas-'+new Date().toISOString().slice(0,10)+'.png';
+      a.href=canvas.toDataURL('image/png');
+      document.body.appendChild(a); a.click(); a.remove();
+    }).catch(function(e){ idle(); alert('Gagal bikin screenshot: '+(e&&e.message||e)); });
+}
 
 /* ============ tag editor (admin) ============ */
 var editing=null;
@@ -501,8 +641,8 @@ function resetAll(){
   if(!isAdmin){ openLogin(); return; }
   if(!confirm('HAPUS SEMUA data (rekening, alokasi, member, pembayaran, saldo awal)?\nTidak bisa dibatalkan.')) return;
   if(!confirm('Yakin betul? Semua transaksi & tagging akan hilang. Lanjut?')) return;
-  if(DEMO){ D=SEED(); fromM=toM=evalM=null; afterLoad(); return; }
-  api('resetData',{pwd:PWD}).then(function(){ fromM=toM=evalM=null; reload(function(){alert('Data dikosongkan. Silakan Import PDF BCA lagi, lalu Auto-tag.');}); }).catch(function(e){alert(e.message);});
+  if(DEMO){ D=SEED(); fromM=toM=evalFromM=evalToM=null; afterLoad(); return; }
+  api('resetData',{pwd:PWD}).then(function(){ fromM=toM=evalFromM=evalToM=null; reload(function(){alert('Data dikosongkan. Silakan Import PDF BCA lagi, lalu Auto-tag.');}); }).catch(function(e){alert(e.message);});
 }
 function cleanupData(){
   if(!isAdmin){ openLogin(); return; }
@@ -666,7 +806,7 @@ function tryLogin(){
   if(DEMO){ pwd==='admin'?ok():no(); return; }
   api('checkAdmin',{pwd:pwd}).then(function(v){v?ok():no();}).catch(no);
 }
-function logout(){isAdmin=false;PWD='';if(tab==='tagging'||tab==='rekening')tab='dashboard';render();}
+function logout(){isAdmin=false;PWD='';if(tab==='tagging'||tab==='rekening'||tab==='sementara')tab='dashboard';render();}
 
 /* ============ import PDF rekening (admin, pakai pdf.js) ============ */
 var imported=null;
@@ -763,8 +903,8 @@ function writeImport(){
 /* ============ shell ============ */
 function modal(inner){document.getElementById('editor').innerHTML='<div class="sheet">'+inner+'</div>';document.getElementById('editor').hidden=false;}
 function closeModal(){document.getElementById('editor').hidden=true;document.getElementById('editor').innerHTML='';editing=null;}
-function allowedTabs(){return isAdmin?['dashboard','evaluasi','membership','tagging','rekening']:['dashboard','evaluasi','membership'];}
-const TABLABEL={dashboard:"Dashboard",evaluasi:"Evaluasi",membership:"Membership",tagging:"Tagging",rekening:"Rekening"};
+function allowedTabs(){return isAdmin?['dashboard','evaluasi','membership','tagging','rekening','sementara']:['dashboard','evaluasi','membership'];}
+const TABLABEL={dashboard:"Dashboard",evaluasi:"Evaluasi",membership:"Membership",tagging:"Tagging",rekening:"Rekening",sementara:"Sementara"};
 function renderNav(){
   const ts=allowedTabs(); if(ts.indexOf(tab)<0) tab='dashboard';
   document.getElementById('nav').innerHTML=ts.map(t=>'<button data-tab="'+t+'" aria-current="'+(t===tab)+'">'+TABLABEL[t]+'</button>').join("");
@@ -777,7 +917,7 @@ function renderAuth(){
 function render(){
   renderNav(); renderAuth();
   document.getElementById('view').innerHTML=
-    tab==='dashboard'?dashboardView():tab==='evaluasi'?evaluasiView():tab==='membership'?membershipView():tab==='tagging'?taggingView():rekeningView();
+    tab==='dashboard'?dashboardView():tab==='evaluasi'?evaluasiView():tab==='membership'?membershipView():tab==='tagging'?taggingView():tab==='sementara'?sementaraView():rekeningView();
 }
 document.getElementById('nav').addEventListener('click',function(e){var b=e.target.closest('button');if(b){tab=b.dataset.tab;render();}});
 document.getElementById('editor').addEventListener('click',function(e){if(e.target.id==='editor')closeModal();});
