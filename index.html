@@ -121,6 +121,11 @@
     .topright{align-items:flex-start}
     .brand h1{font-size:25px}.ym .v{width:90px}
   }
+  .busyp{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:10px;
+    background:var(--copper-d);color:#fff;font-size:14px;padding:11px 18px;border-radius:999px;box-shadow:0 8px 24px rgba(0,0,0,.22)}
+  .busyp[hidden]{display:none}
+  .busyp .spin{width:15px;height:15px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;flex:0 0 auto}
+  @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -133,6 +138,7 @@
 </header>
 <div class="wrap"><main id="view"><p class="sub">Memuat data…</p></main></div>
 <div class="editor" id="editor" hidden></div>
+<div id="busy" class="busyp" hidden><span class="spin"></span><span id="busyt">Memproses…</span></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
@@ -170,6 +176,8 @@ function boot(){
     api('getData').then(function(d){D=d;DEMO=false;afterLoad();}).catch(function(){DEMO=true;D=SEED();afterLoad();});
   } else { DEMO=true; D=SEED(); afterLoad(); }
 }
+function busy(msg){ var b=document.getElementById('busy'); if(b){ var t=document.getElementById('busyt'); if(t)t.textContent=msg||'Memproses…'; b.hidden=false; } }
+function idle(){ var b=document.getElementById('busy'); if(b) b.hidden=true; }
 function reload(cb){
   if(DEMO){ if(cb)cb(); render(); return; }
   api('getData').then(function(d){D=d;if(cb)cb();render();}).catch(function(e){alert(e.message);});
@@ -291,8 +299,7 @@ function monthFilter(cur,varName){
 }
 function passMonth(r,cur){return cur==='all'||monthOf(r)===+cur;}
 function rekeningView(){
-  const todoRek=D.rekening.filter(r=>!isTagged(r.id)).length;
-  const toolbar='<div class="toolbar"><p class="lead" style="margin:0">Rekening koran</p><span style="display:flex;gap:8px;flex-wrap:wrap">'+(isAdmin&&todoRek?'<button class="btn" onclick="autoTagAll()">⚡ Auto-tag ('+todoRek+')</button>':'')+'<button class="btn" onclick="resetAll()">Reset data</button><button class="btn primary" onclick="openImport()">Import PDF BCA</button></span></div>';
+  const toolbar='<div class="toolbar"><p class="lead" style="margin:0">Rekening koran</p><span style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="cleanupData()">Bersihkan duplikat</button><button class="btn" onclick="resetAll()">Reset data</button><button class="btn primary" onclick="openImport()">Import PDF BCA</button></span></div>';
   if(!D.rekening.length) return toolbar+emptyState("Belum ada baris rekening. Klik <b>Import PDF BCA</b> untuk tarik mutasi dari e-Statement. Saldo awal terisi otomatis dari statement pertama.");
   const rows=D.rekening.filter(r=>passMonth(r,fRek)).map(r=>{
     const s=tagSummary(r.id);
@@ -324,9 +331,9 @@ function taggingView(){
       '<td style="font-size:13px">'+detail+'</td></tr>';
   }).join("");
   const todo=D.rekening.filter(r=>!isTagged(r.id)).length;
-  const bar='<div class="toolbar"><p class="lead" style="margin:0">Tagging &amp; alokasi</p>'+(isAdmin&&todo?'<button class="btn primary" onclick="autoTagAll()">⚡ Auto-tag semua ('+todo+')</button>':'')+'</div>';
+  const bar='<div class="toolbar"><p class="lead" style="margin:0">Tagging &amp; alokasi</p></div>';
   return bar+'<div class="controls">'+monthFilter(fTag,'fTag')+'</div>'+
-    '<p class="sub">Pecah satu baris bank jadi beberapa alokasi — beda member, beda bulan, atau campuran lapangan + shuttlecock. Total alokasi wajib sama dengan nominal bank. '+(todo?'<b style="color:var(--copper-d)">'+todo+' baris belum di-tag.</b> Klik <b>Auto-tag semua</b> untuk isi otomatis dari keterangan, lalu betulin yang bertanda ⚠.':'Semua sudah di-tag.')+'</p>'+
+    '<p class="sub">Pecah satu baris bank jadi beberapa alokasi — beda member, beda bulan, atau campuran lapangan + shuttlecock. Total alokasi wajib sama dengan nominal bank. '+(todo?'<b style="color:var(--copper-d)">'+todo+' baris belum di-tag.</b> Auto-tag jalan otomatis sehabis Import PDF; sisanya klik barisnya untuk tag manual. Betulin yang bertanda ⚠.':'Semua sudah di-tag.')+'</p>'+
     '<div class="card"><table><thead><tr><th>Tgl</th><th>Arah</th><th class="num">Nominal</th><th>Alokasi</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
@@ -497,6 +504,13 @@ function resetAll(){
   if(DEMO){ D=SEED(); fromM=toM=evalM=null; afterLoad(); return; }
   api('resetData',{pwd:PWD}).then(function(){ fromM=toM=evalM=null; reload(function(){alert('Data dikosongkan. Silakan Import PDF BCA lagi, lalu Auto-tag.');}); }).catch(function(e){alert(e.message);});
 }
+function cleanupData(){
+  if(!isAdmin){ openLogin(); return; }
+  if(DEMO){ alert('Mode demo — tidak ada data server untuk dibersihkan.'); return; }
+  if(!confirm('Bersihkan duplikat?\nBaris rekening yang isinya persis sama akan digabung jadi satu, alokasi dobel & alokasi member "(?)" yang nyangkut dibuang. Tagging yang benar tetap aman.')) return;
+  busy('Membersihkan duplikat…');
+  api('cleanup',{pwd:PWD}).then(function(res){ reload(function(){ idle(); alert('Selesai dibersihkan.\n• '+((res&&res.rekDup)||0)+' baris rekening dobel digabung\n• '+((res&&res.alDup)||0)+' alokasi dobel dibuang\n• '+((res&&res.alBroken)||0)+' alokasi "(?)" dibuang\nSisa: '+((res&&res.rekKept)||0)+' transaksi, '+((res&&res.alKept)||0)+' alokasi.'); }); }).catch(function(e){ idle(); alert(e.message); });
+}
 function autoTagAll(skipConfirm){
   if(!isAdmin){ openLogin(); return; }
   var untag=D.rekening.filter(function(r){return !isTagged(r.id);});
@@ -508,10 +522,11 @@ function autoTagAll(skipConfirm){
     var rows=d.rows.map(function(x){var c=CATS[x.kat];return {kat:x.kat,member:c.member?resolve(x.member):'',nama:c.nama?(x.nama||''):'',bulan:+x.bulan,qty:c.qty?(+x.qty||''):'',satuan:c.qty?(x.satuan||c.satuan):'',nominal:+x.nominal};});
     items.push({ref:r.id,rows:rows}); cnt+=rows.length;
   });
-  if(!items.length){ if(!skipConfirm) alert('Tidak ada baris yang bisa di-auto-tag (nama tak terbaca). Tag manual ya.'); return; }
-  if(!skipConfirm && !confirm('Auto-tag '+items.length+' transaksi (~'+cnt+' alokasi)?\nSemua ditandai "auto" — yang multi-bulan / nominal besar dapat ⚠ "cek". Tinggal kamu betulin lalu Simpan.')) return;
-  if(DEMO){ newMembers.forEach(function(m){D.members.push(m);}); items.forEach(function(it){it.rows.forEach(function(x,k){D.alokasi.push(Object.assign({id:'al'+Date.now()+'_'+Math.floor(Math.random()*1e6),ref:it.ref,auto:'1'},x));});}); render(); alert('Auto-tag selesai (demo) — '+cnt+' alokasi bertanda "auto".'); return; }
-  api('saveAlokasiBatch',{pwd:PWD,items:items,newMembers:newMembers}).then(function(res){reload(function(){alert('Auto-tag selesai — '+((res&&res.added)||cnt)+' alokasi bertanda "auto" dibuat. Cek baris ⚠/auto, buka & Simpan untuk verifikasi.');});}).catch(function(e){alert(e.message);});
+  if(!items.length){ idle(); if(!skipConfirm) alert('Tidak ada baris yang bisa di-auto-tag (nama tak terbaca). Tag manual ya.'); return; }
+  if(!skipConfirm && !confirm('Auto-tag '+items.length+' transaksi (~'+cnt+' alokasi)?\nSemua ditandai "auto" — yang multi-bulan / nominal besar dapat ⚠ "cek". Tinggal kamu betulin lalu Simpan.')){ idle(); return; }
+  busy('Auto-tag berjalan… jangan ditutup dulu ya');
+  if(DEMO){ newMembers.forEach(function(m){D.members.push(m);}); items.forEach(function(it){it.rows.forEach(function(x,k){D.alokasi.push(Object.assign({id:'al'+Date.now()+'_'+Math.floor(Math.random()*1e6),ref:it.ref,auto:'1'},x));});}); render(); idle(); alert('Auto-tag selesai (demo) — '+cnt+' alokasi bertanda "auto".'); return; }
+  api('saveAlokasiBatch',{pwd:PWD,items:items,newMembers:newMembers}).then(function(res){reload(function(){idle();alert('Auto-tag selesai — '+((res&&res.added)||cnt)+' alokasi bertanda "auto" dibuat. Cek baris ⚠/auto, buka & Simpan untuk verifikasi.');});}).catch(function(e){idle();alert(e.message);});
 }
 function openTag(ref){
   if(!isAdmin){ openLogin(); return; }
@@ -727,17 +742,22 @@ function renderImportPreview(){
       line('Mutasi DB ('+g.n_db+')',g.sum_db,e.db.amount)+
       line('Saldo akhir',g.saldo_akhir,e.saldo.amount)+'</div>'+
     '<div class="card" style="margin-top:12px;max-height:240px;overflow:auto"><table><thead><tr><th>Tgl</th><th>Arah</th><th class="num">Nominal</th><th>Keterangan</th></tr></thead><tbody>'+tbl+'</tbody></table></div>'+
-    '<div class="sumbar">'+badge+'<span class="acts"><button class="btn" onclick="closeModal()">Batal</button><button class="btn primary" '+(r.ok?'':'')+' onclick="writeImport()">Tulis ke Rekening ('+r.rows.length+')</button></span></div>'+
+    '<div class="sumbar">'+badge+'<span class="acts"><button class="btn" onclick="closeModal()">Batal</button><button id="btnWrite" class="btn primary" onclick="writeImport()">Tulis ke Rekening ('+r.rows.length+')</button></span></div>'+
     (r.ok?'':'<p class="hint">Tetap bisa disimpan, tapi sebaiknya cek dulu — biasanya ada baris yang kebaca meleng.</p>');
 }
+var _importing=false;
 function writeImport(){
+  if(_importing) return;                       // cegah double-klik -> dobel import
+  _importing=true;
+  var btn=document.getElementById('btnWrite'); if(btn){ btn.disabled=true; btn.textContent='Menyimpan…'; }
+  busy('Menyimpan transaksi ke Rekening…');
   const rows=imported.rows, sa=imported.saldoAwal;
   if(DEMO){
     const key=r=>[r.tgl,r.arah,r.nominal,r.ket].join('|'); const seen={}; D.rekening.forEach(r=>seen[key(r)]=true);
     let n=0; rows.forEach((r,i)=>{ if(seen[key(r)])return; D.rekening.push({id:'rk'+Date.now()+i,tgl:r.tgl,arah:r.arah,nominal:r.nominal,saldo:r.saldo,ket:r.ket,raw:r.raw,bukti:''}); n++; });
-    D.setting.saldo_awal=D.setting.saldo_awal||sa; closeModal(); render(); autoTagAll(true); return;
+    D.setting.saldo_awal=D.setting.saldo_awal||sa; closeModal(); render(); _importing=false; autoTagAll(true); return;
   }
-  api('importRekening',{pwd:PWD,rows:rows,saldoAwal:sa}).then(function(n){reload(function(){closeModal();render();autoTagAll(true);});}).catch(function(e){alert(e.message);});
+  api('importRekening',{pwd:PWD,rows:rows,saldoAwal:sa}).then(function(n){reload(function(){closeModal();render();_importing=false;autoTagAll(true);});}).catch(function(e){_importing=false; idle(); if(btn){btn.disabled=false;btn.textContent='Tulis ke Rekening ('+rows.length+')';} alert(e.message);});
 }
 
 /* ============ shell ============ */
