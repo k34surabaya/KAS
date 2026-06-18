@@ -135,6 +135,7 @@
   .xbtn{appearance:none;border:1px solid var(--line);background:var(--surface);color:var(--out);width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:15px;line-height:1}
   .xbtn:hover{background:var(--surface-2)}
   @media (max-width:720px){ .tempform{grid-template-columns:1fr 1fr} }
+  .search{font-family:inherit;font-size:14px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);min-width:200px;flex:1}
 </style>
 </head>
 <body>
@@ -150,7 +151,6 @@
 <div id="busy" class="busyp" hidden><span class="spin"></span><span id="busyt">Memproses…</span></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
   if (typeof pdfjsLib !== 'undefined') pdfjsLib.GlobalWorkerOptions.workerSrc =
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -161,7 +161,7 @@
 var API_URL = 'https://script.google.com/macros/s/AKfycbzmwrrRCc_Tv1BrK8li7CwHh13OkndZRYr-7tqZf_FOSQwEx9MoKShlrQZ3AP26o5GT/exec';
 
 var DEMO=false, PWD='', isAdmin=false, tab='dashboard', scope='bulan', fromM=null, toM=null;
-var fTag='all', fRek='all', evalFromM=null, evalToM=null;
+var fTag='all', fRek='all', evalFromM=null, evalToM=null, qRek='', qTag='';
 
 function api(action, data){
   return fetch(API_URL, {
@@ -215,6 +215,7 @@ const CATS={
   biaya_bank:{label:"Biaya bank (non-op)",arah:"DB",op:false},
 };
 const rp=n=>"Rp"+Number(n||0).toLocaleString("id-ID",{maximumFractionDigits:2});
+const escA=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
 const rek=id=>D.rekening.find(r=>r.id===id);
 const mem=id=>D.members.find(m=>m.id===id);
 const memName=id=>{const m=mem(id);return m?m.nama:"(?)";};
@@ -317,12 +318,13 @@ function rekeningView(){
     const st=!s?'<span class="st"><span class="d" style="background:var(--copper)"></span><span style="color:var(--copper-d)">belum di-tag</span></span>'
       :'<span class="st">'+(s.auto?'<span class="autob">auto</span>':'')+'<span class="d" style="background:'+(s.op?'var(--in)':'var(--faint)')+'"></span><span>'+s.txt+'</span></span>';
     const bukti=r.bukti?'<a href="'+r.bukti+'" target="_blank">lihat bukti</a>':'';
-    return '<tr class="clickable" onclick="openTag(\''+r.id+'\')"><td class="idx">'+fmtTgl(r)+'</td>'+
+    const qd=escA(((r.ket||'')+' '+(r.raw||'')).toLowerCase());
+    return '<tr class="clickable" data-q="'+qd+'" onclick="openTag(\''+r.id+'\')"><td class="idx">'+fmtTgl(r)+'</td>'+
       '<td class="ket">'+r.ket+'<span class="raw">'+r.raw+' '+bukti+'</span></td>'+
       '<td class="num '+(r.arah==='CR'?'cr':'db')+'">'+(r.arah==='CR'?'+':'−')+rp(r.nominal)+'</td>'+
       '<td class="num" style="color:var(--muted)">'+rp(r.saldo)+'</td><td>'+st+'</td></tr>';
   }).join("");
-  return toolbar+'<div class="controls">'+monthFilter(fRek,'fRek')+'</div><p class="sub">Baris mentah dari BCA, apa adanya. CR = pemasukan, DB = pengeluaran. Klik baris untuk validasi, pecah jadi alokasi, dan lampirkan bukti.</p>'+
+  return toolbar+'<div class="controls">'+monthFilter(fRek,'fRek')+'<input class="search" placeholder="Cari keterangan…" value="'+escA(qRek)+'" oninput="qRek=this.value;applySearch()"></div><p class="sub">Baris mentah dari BCA, apa adanya. CR = pemasukan, DB = pengeluaran. Klik baris untuk validasi, pecah jadi alokasi, dan lampirkan bukti.</p>'+
     '<div class="card"><table><thead><tr><th>Tgl</th><th>Keterangan</th><th class="num">Mutasi</th><th class="num">Saldo</th><th>Status</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
 
@@ -332,18 +334,21 @@ function taggingView(){
   const rows=order.map(r=>{
     const auto=isTagged(r.id)&&allocOf(r.id).some(a=>String(a.auto)==='1')?'<span class="autob" title="hasil auto-tag — buka & simpan untuk verifikasi">auto</span> ':'';
     const cek=isTagged(r.id)&&needsCheck(r.id)?'<span class="cek" title="hasil auto-tag, mungkin perlu dibetulin">⚠ cek</span> ':'';
-    const detail=isTagged(r.id)?auto+cek+allocOf(r.id).map(a=>{
+    const al=allocOf(r.id);
+    const detail=isTagged(r.id)?auto+cek+al.map(a=>{
       const who=a.member?memName(a.member).split(" ")[0]:(a.nama||(CATS[a.kat]?CATS[a.kat].label:a.kat));
       const q=a.qty?(" "+a.qty+a.satuan):""; const b=(CATS[a.kat]&&CATS[a.kat].member)?(" "+MONTHS[a.bulan]):"";
       return '<span class="pill">'+(CATS[a.kat]?CATS[a.kat].label.replace(" (non-op)",""):a.kat)+": "+who+b+q+'</span>';
     }).join(" "):'<span style="color:var(--copper-d)">belum di-tag</span>';
-    return '<tr class="clickable" onclick="openTag(\''+r.id+'\')"><td class="idx">'+fmtTgl(r)+'</td>'+
+    const names=al.map(a=>a.member?memName(a.member):(a.nama||'')).join(" ");
+    const qd=escA(((r.ket||'')+' '+(r.raw||'')+' '+names).toLowerCase());
+    return '<tr class="clickable" data-q="'+qd+'" onclick="openTag(\''+r.id+'\')"><td class="idx">'+fmtTgl(r)+'</td>'+
       '<td class="num '+(r.arah==='CR'?'cr':'db')+'">'+r.arah+'</td><td class="num">'+rp(r.nominal)+'</td>'+
       '<td style="font-size:13px">'+detail+'</td></tr>';
   }).join("");
   const todo=D.rekening.filter(r=>!isTagged(r.id)).length;
   const bar='<div class="toolbar"><p class="lead" style="margin:0">Tagging &amp; alokasi</p></div>';
-  return bar+'<div class="controls">'+monthFilter(fTag,'fTag')+'</div>'+
+  return bar+'<div class="controls">'+monthFilter(fTag,'fTag')+'<input class="search" placeholder="Cari keterangan / nama…" value="'+escA(qTag)+'" oninput="qTag=this.value;applySearch()"></div>'+
     '<p class="sub">Pecah satu baris bank jadi beberapa alokasi — beda member, beda bulan, atau campuran lapangan + shuttlecock. Total alokasi wajib sama dengan nominal bank. '+(todo?'<b style="color:var(--copper-d)">'+todo+' baris belum di-tag.</b> Auto-tag jalan otomatis sehabis Import PDF; sisanya klik barisnya untuk tag manual. Betulin yang bertanda ⚠.':'Semua sudah di-tag.')+'</p>'+
     '<div class="card"><table><thead><tr><th>Tgl</th><th>Arah</th><th class="num">Nominal</th><th>Alokasi</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
 }
@@ -519,7 +524,7 @@ function dashboardView(){
     picker='<span class="rangepick">Dari <select onchange="fromM=+this.value;if(toM<fromM)toM=fromM;render()">'+opt(fromM)+'</select> sampai <select onchange="toM=+this.value;if(fromM>toM)fromM=toM;render()">'+opt(toM)+'</select></span>';
   }
   var controls='<div class="seg">'+segs+'</div>'+(picker?'<div class="controls">'+picker+'</div>':'');
-  var head='<div class="toolbar"><p class="lead" style="margin:0">Dashboard</p><span style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn noshot" onclick="screenshotDash()">📷 Screenshot</button><button class="btn noshot" onclick="openPembayaran()">Kirim bukti bayar</button></span></div>';
+  var head='<div class="toolbar"><p class="lead" style="margin:0">Dashboard</p></div>';
 
   var masuk=D.rekening.filter(function(r){return r.arah==="CR"&&inScopeRek(r);}).reduce(function(s,r){return s+r.nominal;},0);
   var keluar=D.rekening.filter(function(r){return r.arah==="DB"&&inScopeRek(r);}).reduce(function(s,r){return s+r.nominal;},0);
@@ -605,14 +610,25 @@ function dashboardView(){
     '<div class="row" style="color:var(--out)"><span>− Pengeluaran</span><span class="n">'+rp(keluar)+'</span></div>'+
     '<div class="row" style="border-top:1px solid var(--line);font-weight:600"><span>Saldo akhir ('+MONTHS[lastM]+')</span><span class="n" style="color:var(--copper-d)">'+rpN(saldoAkhir)+'</span></div>'+
     (saldoAwalPertama===null?'<p class="hint" style="margin-top:8px;color:var(--out)">Saldo awal pertama belum keisi — otomatis terisi saat import statement pertama (Januari).</p>':'')+'</div>';
-  var tempIn=tempList().filter(function(t){var c=CATS[t.kat]||{};var b=+t.bulan;return c.arah==='CR'&&b>=firstM&&b<=lastM;}).reduce(function(s,t){return s+(+t.nominal||0);},0);
-  var tempOut=tempList().filter(function(t){var c=CATS[t.kat]||{};var b=+t.bulan;return c.arah==='DB'&&b>=firstM&&b<=lastM;}).reduce(function(s,t){return s+(+t.nominal||0);},0);
-  var tempCount=tempList().filter(function(t){var b=+t.bulan;return b>=firstM&&b<=lastM;}).length;
+  var tempInScope=tempList().filter(function(t){var b=+t.bulan;return b>=firstM&&b<=lastM;}).slice().sort(function(a,b){return (+a.bulan)-(+b.bulan)||((CATS[a.kat]&&CATS[a.kat].arah==='CR')?-1:1);});
+  var tempIn=tempInScope.filter(function(t){return (CATS[t.kat]||{}).arah==='CR';}).reduce(function(s,t){return s+(+t.nominal||0);},0);
+  var tempOut=tempInScope.filter(function(t){return (CATS[t.kat]||{}).arah==='DB';}).reduce(function(s,t){return s+(+t.nominal||0);},0);
   var proyeksi=(saldoAkhir==null?null:saldoAkhir+tempIn-tempOut);
-  var tempPanel=tempCount?('<div class="panel" style="margin-bottom:14px;border:1px dashed var(--copper)"><h3>Cek sementara <span class="tempb">'+tempCount+' entri</span></h3>'+
-    '<div class="row" style="color:var(--in)"><span>+ Pemasukan sementara</span><span class="n">'+rp(tempIn)+'</span></div>'+
-    '<div class="row" style="color:var(--out)"><span>− Pengeluaran sementara</span><span class="n">'+rp(tempOut)+'</span></div>'+
-    '<div class="row" style="border-top:1px solid var(--line);font-weight:600"><span>Proyeksi saldo akhir (bank + sementara)</span><span class="n" style="color:var(--copper-d)">'+rpN(proyeksi)+'</span></div>'+
+  var tempLines=tempInScope.map(function(t){
+    var c=CATS[t.kat]||{label:t.kat,arah:'CR'};
+    var who=t.member?memName(t.member):(t.nama||'');
+    var q=(t.qty!==''&&t.qty!=null)?(' · '+t.qty+(t.satuan||c.satuan||'')):'';
+    var sign=c.arah==='CR'?'+':'−', col=c.arah==='CR'?'var(--in)':'var(--out)';
+    var note=t.ket?' <span style="color:var(--faint)">— '+t.ket+'</span>':'';
+    return '<div class="row"><span>'+c.label.replace(" (non-op)","")+(who?' · '+who:'')+' · '+MONTHS[+t.bulan]+q+note+'</span>'+
+      '<span class="n" style="color:'+col+'">'+sign+rp(t.nominal)+'</span></div>';
+  }).join("");
+  var tempPanel=tempInScope.length?('<div class="panel" style="margin-bottom:14px;border:1px dashed var(--copper)"><h3>Cek sementara <span class="tempb">'+tempInScope.length+' entri</span></h3>'+
+    tempLines+
+    '<div class="row" style="border-top:1px solid var(--line-2);color:var(--in)"><span>Subtotal pemasukan sementara</span><span class="n">'+rp(tempIn)+'</span></div>'+
+    '<div class="row" style="color:var(--out)"><span>Subtotal pengeluaran sementara</span><span class="n">'+rp(tempOut)+'</span></div>'+
+    '<div class="row"><span>Saldo akhir bank ('+MONTHS[lastM]+')</span><span class="n">'+rpN(saldoAkhir)+'</span></div>'+
+    '<div class="row" style="border-top:1px solid var(--line);font-weight:600"><span>Proyeksi saldo (bank + sementara)</span><span class="n" style="color:var(--copper-d)">'+rpN(proyeksi)+'</span></div>'+
     '<p class="hint" style="margin-top:8px;color:var(--muted)">KPI &amp; saldo bank di atas tetap murni dari rekening. Panel ini cuma proyeksi — hapus entri di tab Sementara setelah PDF masuk.</p></div>'):'';
   return head+controls+kpis+saldoCard+tempPanel+
     (belum>0?'<div class="panel notif" style="margin-bottom:14px"><div class="row" style="border:0"><span class="t">⚠ '+rp(belum)+' udah masuk total, tapi belum dialokasikan — admin tag dulu biar rinciannya muncul.</span><span></span></div></div>':'')+
@@ -620,20 +636,6 @@ function dashboardView(){
     '<div class="panel"><h3>Pengeluaran</h3>'+breakdown("DB",keluar,["lain_lain"])+ops+'</div></div>'+rosters;
 }
 function emptyState(msg){return '<div class="panel" style="text-align:center;color:var(--muted);padding:40px">'+msg+'</div>';}
-function screenshotDash(){
-  var node=document.getElementById('view');
-  if(typeof html2canvas==='undefined'){ alert('Library screenshot belum termuat. Cek koneksi internet lalu coba lagi.'); return; }
-  var bg=getComputedStyle(document.body).backgroundColor||'#efe8da';
-  busy('Menyiapkan gambar…');
-  html2canvas(node,{backgroundColor:bg,scale:2,useCORS:true,ignoreElements:function(el){return el.classList&&el.classList.contains('noshot');}})
-    .then(function(canvas){
-      idle();
-      var a=document.createElement('a');
-      a.download='dashboard-kas-'+new Date().toISOString().slice(0,10)+'.png';
-      a.href=canvas.toDataURL('image/png');
-      document.body.appendChild(a); a.click(); a.remove();
-    }).catch(function(e){ idle(); alert('Gagal bikin screenshot: '+(e&&e.message||e)); });
-}
 
 /* ============ tag editor (admin) ============ */
 var editing=null;
@@ -914,10 +916,17 @@ function renderAuth(){
     ? '<button class="topbtn on" onclick="logout()">Admin ✓ · keluar</button>'
     : '<button class="topbtn" onclick="openLogin()">Masuk admin</button>';
 }
+function applySearch(){
+  var q=(tab==='rekening'?qRek:tab==='tagging'?qTag:'').trim().toLowerCase();
+  var trs=document.querySelectorAll('#view tbody tr');
+  for(var i=0;i<trs.length;i++){ var tr=trs[i]; if(!tr.hasAttribute('data-q')) continue;
+    tr.style.display=(!q||tr.getAttribute('data-q').indexOf(q)>=0)?'':'none'; }
+}
 function render(){
   renderNav(); renderAuth();
   document.getElementById('view').innerHTML=
     tab==='dashboard'?dashboardView():tab==='evaluasi'?evaluasiView():tab==='membership'?membershipView():tab==='tagging'?taggingView():tab==='sementara'?sementaraView():rekeningView();
+  applySearch();
 }
 document.getElementById('nav').addEventListener('click',function(e){var b=e.target.closest('button');if(b){tab=b.dataset.tab;render();}});
 document.getElementById('editor').addEventListener('click',function(e){if(e.target.id==='editor')closeModal();});
